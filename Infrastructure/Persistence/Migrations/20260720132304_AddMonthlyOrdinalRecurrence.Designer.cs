@@ -3,6 +3,7 @@ using System;
 using DoIt.Api.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -10,9 +11,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace DoIt.Api.Infrastructure.Persistence.Migrations
 {
     [DbContext(typeof(DoItDbContext))]
-    partial class DoItDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260720132304_AddMonthlyOrdinalRecurrence")]
+    partial class AddMonthlyOrdinalRecurrence
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "9.0.7");
@@ -68,93 +71,6 @@ namespace DoIt.Api.Infrastructure.Persistence.Migrations
                         .IsUnique();
 
                     b.ToTable("BackupSchedules");
-                });
-
-            modelBuilder.Entity("DoIt.Api.Domain.Entities.CalendarEvent", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("TEXT");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("TEXT");
-
-                    b.Property<Guid>("CreatedByUserId")
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("Description")
-                        .HasMaxLength(2000)
-                        .HasColumnType("TEXT");
-
-                    b.Property<DateTime>("EndAtUtc")
-                        .HasColumnType("TEXT");
-
-                    b.Property<bool>("IsAllDay")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<bool>("IsCancelled")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<DateTime>("StartAtUtc")
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("TimeZoneId")
-                        .IsRequired()
-                        .HasMaxLength(128)
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("Title")
-                        .IsRequired()
-                        .HasMaxLength(220)
-                        .HasColumnType("TEXT");
-
-                    b.Property<DateTime>("UpdatedAt")
-                        .HasColumnType("TEXT");
-
-                    b.Property<Guid?>("ZoneId")
-                        .HasColumnType("TEXT");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("CreatedByUserId", "StartAtUtc");
-
-                    b.HasIndex("ZoneId", "StartAtUtc");
-
-                    b.ToTable("CalendarEvents", (string)null);
-                });
-
-            modelBuilder.Entity("DoIt.Api.Domain.Entities.CalendarEventReminder", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("TEXT");
-
-                    b.Property<DateTime?>("AcknowledgedAt")
-                        .HasColumnType("TEXT");
-
-                    b.Property<Guid>("CalendarEventId")
-                        .HasColumnType("TEXT");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("TEXT");
-
-                    b.Property<bool>("IsEnabled")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<int>("OffsetMinutes")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<DateTime>("UpdatedAt")
-                        .HasColumnType("TEXT");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("CalendarEventId", "IsEnabled");
-
-                    b.HasIndex("CalendarEventId", "OffsetMinutes")
-                        .IsUnique();
-
-                    b.ToTable("CalendarEventReminders", (string)null);
                 });
 
             modelBuilder.Entity("DoIt.Api.Domain.Entities.DoItTask", b =>
@@ -706,35 +622,6 @@ namespace DoIt.Api.Infrastructure.Persistence.Migrations
                     b.Navigation("User");
                 });
 
-            modelBuilder.Entity("DoIt.Api.Domain.Entities.CalendarEvent", b =>
-                {
-                    b.HasOne("DoIt.Api.Domain.Entities.User", "CreatedByUser")
-                        .WithMany()
-                        .HasForeignKey("CreatedByUserId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
-                    b.HasOne("DoIt.Api.Domain.Entities.Zone", "Zone")
-                        .WithMany()
-                        .HasForeignKey("ZoneId")
-                        .OnDelete(DeleteBehavior.SetNull);
-
-                    b.Navigation("CreatedByUser");
-
-                    b.Navigation("Zone");
-                });
-
-            modelBuilder.Entity("DoIt.Api.Domain.Entities.CalendarEventReminder", b =>
-                {
-                    b.HasOne("DoIt.Api.Domain.Entities.CalendarEvent", "CalendarEvent")
-                        .WithMany("Reminders")
-                        .HasForeignKey("CalendarEventId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("CalendarEvent");
-                });
-
             modelBuilder.Entity("DoIt.Api.Domain.Entities.DoItTask", b =>
                 {
                     b.HasOne("DoIt.Api.Domain.Entities.User", "CreatedByUser")
@@ -890,11 +777,6 @@ namespace DoIt.Api.Infrastructure.Persistence.Migrations
                         .IsRequired();
 
                     b.Navigation("CreatedByUser");
-                });
-
-            modelBuilder.Entity("DoIt.Api.Domain.Entities.CalendarEvent", b =>
-                {
-                    b.Navigation("Reminders");
                 });
 
             modelBuilder.Entity("DoIt.Api.Domain.Entities.DoItTask", b =>

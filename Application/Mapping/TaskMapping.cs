@@ -53,6 +53,7 @@ public static class TaskMapping
             schedule.StartDate,
             schedule.EndDate,
             schedule.Weekday,
+            schedule.WeekOfMonth,
             schedule.TimesPerWeek,
             schedule.EveryNDays,
             schedule.AvailableFromTime,

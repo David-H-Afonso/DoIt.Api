@@ -10,6 +10,7 @@ public sealed class TaskSchedule
     public DateOnly StartDate { get; set; }
     public DateOnly? EndDate { get; set; }
     public DayOfWeek? Weekday { get; set; }
+    public int? WeekOfMonth { get; set; }
     public int? TimesPerWeek { get; set; }
     public int? EveryNDays { get; set; }
     public TimeOnly? AvailableFromTime { get; set; }

@@ -4,4 +4,5 @@ public sealed record NowResponse(
     DateOnly Date,
     string Scope,
     NowProgressResponse Progress,
-    IReadOnlyList<NowZoneResponse> Zones);
+    IReadOnlyList<NowZoneResponse> Zones,
+    IReadOnlyList<NowTaskResponse> Upcoming);

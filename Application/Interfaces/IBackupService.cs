@@ -9,4 +9,5 @@ public interface IBackupService
     Task<BackupScheduleResponse> GetAsync(Guid userId, CancellationToken cancellationToken);
     Task<BackupScheduleResponse> UpdateAsync(Guid userId, UpdateBackupScheduleRequest request, CancellationToken cancellationToken);
     Task<BackupScheduleResponse> RunNowAsync(Guid userId, CancellationToken cancellationToken);
+    Task<FullBackupResponse> RunFullNowAsync(Guid userId, CancellationToken cancellationToken);
 }

@@ -11,4 +11,5 @@ public sealed record TaskScheduleRequest(
     TimeOnly? AvailableUntilTime,
     TimeOnly? RecommendedTime,
     string? UnavailableVisibilityMode,
-    string? TimeZoneId = null);
+    string? TimeZoneId = null,
+    int? WeekOfMonth = null);

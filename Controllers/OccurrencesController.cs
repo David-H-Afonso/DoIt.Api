@@ -18,6 +18,13 @@ public sealed class OccurrencesController(ITaskActionService taskActionService) 
         return Ok(await taskActionService.CompleteAsync(GetUserId(), id, cancellationToken));
     }
 
+    [HttpPost("{id:guid}/complete-early")]
+    [ProducesResponseType<OccurrenceActionResponse>(StatusCodes.Status200OK)]
+    public async Task<ActionResult<OccurrenceActionResponse>> CompleteEarly(Guid id, CancellationToken cancellationToken)
+    {
+        return Ok(await taskActionService.CompleteEarlyAsync(GetUserId(), id, cancellationToken));
+    }
+
     [HttpPost("{id:guid}/miss")]
     [ProducesResponseType<OccurrenceActionResponse>(StatusCodes.Status200OK)]
     public async Task<ActionResult<OccurrenceActionResponse>> Miss(Guid id, CancellationToken cancellationToken)

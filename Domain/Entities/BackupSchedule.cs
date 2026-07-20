@@ -4,7 +4,7 @@ public sealed class BackupSchedule
 {
     public Guid Id { get; set; }
     public Guid UserId { get; set; }
-    public string DestinationPath { get; set; } = "../backups";
+    public string DestinationPath { get; set; } = "/app/data/backups";
     public int RetentionCount { get; set; } = 7;
     public string FileNamePrefix { get; set; } = "";
     public string FileNameSuffix { get; set; } = "";

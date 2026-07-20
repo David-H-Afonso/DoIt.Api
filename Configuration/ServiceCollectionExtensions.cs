@@ -64,6 +64,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<INowService, NowService>();
         services.AddScoped<IOccurrenceService, OccurrenceService>();
         services.AddScoped<IReviewService, ReviewService>();
+        services.AddScoped<IStatisticsService, StatisticsService>();
         services.AddScoped<ITaskActionService, TaskActionService>();
         services.AddScoped<IThemePreferenceService, ThemePreferenceService>();
         services.AddScoped<IXpService, XpService>();
@@ -71,6 +72,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IUserService, UserService>();
         services.AddScoped<ITaskService, TaskService>();
         services.AddScoped<IBackupService, BackupService>();
+        services.AddScoped<ICalendarEventService, CalendarEventService>();
         services.AddSingleton<IJwtTokenService, JwtTokenService>();
         services.AddSingleton<IPasswordHasher, Pbkdf2PasswordHasher>();
 

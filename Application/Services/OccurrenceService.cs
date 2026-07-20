@@ -10,7 +10,9 @@ public sealed class OccurrenceService(DoItDbContext dbContext) : IOccurrenceServ
 {
     public async Task<TaskOccurrence> GetOrCreateAsync(DoItTask task, DateOnly date, DateTime now, CancellationToken cancellationToken)
     {
-        var occurrence = await dbContext.TaskOccurrences.FirstOrDefaultAsync(candidate => candidate.TaskId == task.Id && candidate.Date == date, cancellationToken);
+        var occurrence = await dbContext.TaskOccurrences
+            .Include(candidate => candidate.Completions)
+            .FirstOrDefaultAsync(candidate => candidate.TaskId == task.Id && candidate.Date == date, cancellationToken);
         if (occurrence is not null)
         {
             return occurrence;
@@ -21,6 +23,7 @@ public sealed class OccurrenceService(DoItDbContext dbContext) : IOccurrenceServ
             Id = Guid.NewGuid(),
             TaskId = task.Id,
             Date = date,
+            TimeZoneId = task.Schedule?.TimeZoneId,
             AvailableFromAt = Combine(date, task.Schedule?.AvailableFromTime, task.Schedule?.TimeZoneId),
             AvailableUntilAt = Combine(date, task.Schedule?.AvailableUntilTime, task.Schedule?.TimeZoneId),
             RecommendedAt = Combine(date, task.Schedule?.RecommendedTime, task.Schedule?.TimeZoneId),

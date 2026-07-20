@@ -38,4 +38,17 @@ public sealed class BackupsController(IBackupService backupService) : Controller
     {
         return Ok(await backupService.RunNowAsync(userId, cancellationToken));
     }
+
+    [HttpPost("full/run-now")]
+    [ProducesResponseType<FullBackupResponse>(StatusCodes.Status200OK)]
+    public async Task<ActionResult<FullBackupResponse>> RunFullNow(CancellationToken cancellationToken)
+    {
+        return Ok(await backupService.RunFullNowAsync(GetUserId(), cancellationToken));
+    }
+
+    private Guid GetUserId()
+    {
+        var userIdValue = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+        return Guid.TryParse(userIdValue, out var userId) ? userId : throw new UnauthorizedAccessException();
+    }
 }

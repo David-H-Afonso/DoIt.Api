@@ -9,6 +9,7 @@ public sealed class TaskOccurrenceConfiguration : IEntityTypeConfiguration<TaskO
     public void Configure(EntityTypeBuilder<TaskOccurrence> builder)
     {
         builder.HasKey(occurrence => occurrence.Id);
+        builder.Property(occurrence => occurrence.TimeZoneId).HasMaxLength(128);
         builder.Property(occurrence => occurrence.Status).HasConversion<string>().HasMaxLength(32);
         builder.HasIndex(occurrence => new { occurrence.TaskId, occurrence.Date }).IsUnique();
         builder.HasOne(occurrence => occurrence.Task)

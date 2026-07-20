@@ -17,6 +17,8 @@ public sealed class DoItDbContext(DbContextOptions<DoItDbContext> options) : DbC
     public DbSet<XpEvent> XpEvents => Set<XpEvent>();
     public DbSet<ThemePreference> ThemePreferences => Set<ThemePreference>();
     public DbSet<BackupSchedule> BackupSchedules => Set<BackupSchedule>();
+    public DbSet<CalendarEvent> CalendarEvents => Set<CalendarEvent>();
+    public DbSet<CalendarEventReminder> CalendarEventReminders => Set<CalendarEventReminder>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

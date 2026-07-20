@@ -235,6 +235,7 @@ public sealed class TaskService(DoItDbContext dbContext, IOccurrenceService occu
         var startDate = request?.StartDate ?? DateOnly.FromDateTime(DateTime.UtcNow);
         var endDate = request?.EndDate;
         var weekday = request?.Weekday;
+        var weekOfMonth = request?.WeekOfMonth;
         var timesPerWeek = request?.TimesPerWeek;
         var everyNDays = request?.EveryNDays;
         var availableFrom = request?.AvailableFromTime;
@@ -243,12 +244,13 @@ public sealed class TaskService(DoItDbContext dbContext, IOccurrenceService occu
         var timeZoneId = TimeZoneHelper.Normalize(request?.TimeZoneId);
         var unavailableMode = ParseEnum(request?.UnavailableVisibilityMode, UnavailableVisibilityMode.Dimmed);
 
-        ValidateSchedule(recurrenceType, availableFrom, availableUntil, weekday, timesPerWeek, everyNDays);
+        ValidateSchedule(recurrenceType, availableFrom, availableUntil, weekday, timesPerWeek, everyNDays, weekOfMonth);
 
         schedule.RecurrenceType = recurrenceType;
         schedule.StartDate = startDate;
         schedule.EndDate = endDate;
         schedule.Weekday = weekday;
+        schedule.WeekOfMonth = weekOfMonth;
         schedule.TimesPerWeek = timesPerWeek;
         schedule.EveryNDays = everyNDays;
         schedule.AvailableFromTime = availableFrom;
@@ -329,11 +331,16 @@ public sealed class TaskService(DoItDbContext dbContext, IOccurrenceService occu
         return ids;
     }
 
-    private static void ValidateSchedule(RecurrenceType recurrenceType, TimeOnly? availableFrom, TimeOnly? availableUntil, DayOfWeek? weekday, int? timesPerWeek, int? everyNDays)
+    private static void ValidateSchedule(RecurrenceType recurrenceType, TimeOnly? availableFrom, TimeOnly? availableUntil, DayOfWeek? weekday, int? timesPerWeek, int? everyNDays, int? weekOfMonth)
     {
-        if (recurrenceType == RecurrenceType.Weekday && weekday is null)
+        if ((recurrenceType == RecurrenceType.Weekday || recurrenceType == RecurrenceType.MonthlyOrdinalWeekday) && weekday is null)
         {
             throw new ApiException(StatusCodes.Status400BadRequest, "weekday_required", "Weekday recurrence requires a weekday.");
+        }
+
+        if (recurrenceType == RecurrenceType.MonthlyOrdinalWeekday && weekOfMonth is < 1 or > 4)
+        {
+            throw new ApiException(StatusCodes.Status400BadRequest, "week_of_month_required", "Monthly weekday recurrence requires an ordinal from one to four.");
         }
 
         if (recurrenceType == RecurrenceType.TimesPerWeek && (timesPerWeek is null or <= 0))

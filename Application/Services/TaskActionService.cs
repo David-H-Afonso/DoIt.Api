@@ -12,17 +12,22 @@ public sealed class TaskActionService(DoItDbContext dbContext, IXpService xpServ
 {
     public Task<OccurrenceActionResponse> CompleteAsync(Guid userId, Guid occurrenceId, CancellationToken cancellationToken)
     {
-        return ApplyActionAsync(userId, occurrenceId, TaskCompletionAction.Done, cancellationToken);
+        return ApplyActionAsync(userId, occurrenceId, TaskCompletionAction.Done, allowEarly: false, cancellationToken);
+    }
+
+    public Task<OccurrenceActionResponse> CompleteEarlyAsync(Guid userId, Guid occurrenceId, CancellationToken cancellationToken)
+    {
+        return ApplyActionAsync(userId, occurrenceId, TaskCompletionAction.Done, allowEarly: true, cancellationToken);
     }
 
     public Task<OccurrenceActionResponse> MissAsync(Guid userId, Guid occurrenceId, CancellationToken cancellationToken)
     {
-        return ApplyActionAsync(userId, occurrenceId, TaskCompletionAction.Missed, cancellationToken);
+        return ApplyActionAsync(userId, occurrenceId, TaskCompletionAction.Missed, allowEarly: false, cancellationToken);
     }
 
     public Task<OccurrenceActionResponse> NotApplicableAsync(Guid userId, Guid occurrenceId, CancellationToken cancellationToken)
     {
-        return ApplyActionAsync(userId, occurrenceId, TaskCompletionAction.NotApplicable, cancellationToken);
+        return ApplyActionAsync(userId, occurrenceId, TaskCompletionAction.NotApplicable, allowEarly: false, cancellationToken);
     }
 
     public async Task<OccurrenceActionResponse> UndoAsync(Guid userId, Guid occurrenceId, CancellationToken cancellationToken)
@@ -41,7 +46,14 @@ public sealed class TaskActionService(DoItDbContext dbContext, IXpService xpServ
         var now = DateTime.UtcNow;
         completion.RevertedAt = now;
         var userXp = await xpService.RevertCompletionAsync(completion, cancellationToken);
-        occurrence.Status = OccurrenceStatus.Pending;
+        var hasRemainingDone = await dbContext.TaskCompletions.AnyAsync(candidate =>
+            candidate.OccurrenceId == occurrence.Id &&
+            candidate.UserId == userId &&
+            candidate.Id != completion.Id &&
+            candidate.Action == TaskCompletionAction.Done &&
+            candidate.RevertedAt == null,
+            cancellationToken);
+        occurrence.Status = hasRemainingDone ? OccurrenceStatus.Done : OccurrenceStatus.Pending;
         occurrence.UpdatedAt = now;
         if (occurrence.Task?.Schedule?.RecurrenceType == RecurrenceType.Manual)
         {
@@ -53,10 +65,19 @@ public sealed class TaskActionService(DoItDbContext dbContext, IXpService xpServ
         return ToResponse(occurrence, 0, userXp);
     }
 
-    private async Task<OccurrenceActionResponse> ApplyActionAsync(Guid userId, Guid occurrenceId, TaskCompletionAction action, CancellationToken cancellationToken)
+    private async Task<OccurrenceActionResponse> ApplyActionAsync(Guid userId, Guid occurrenceId, TaskCompletionAction action, bool allowEarly, CancellationToken cancellationToken)
     {
         var occurrence = await GetUserOccurrenceAsync(userId, occurrenceId, cancellationToken);
-        if (action == TaskCompletionAction.Done && occurrence.AvailableFromAt is not null && DateTime.UtcNow < occurrence.AvailableFromAt)
+        if (action == TaskCompletionAction.Done && allowEarly)
+        {
+            var localToday = DateOnly.FromDateTime(TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, TimeZoneHelper.Find(occurrence.TimeZoneId ?? occurrence.Task?.Schedule?.TimeZoneId)).Date);
+            if (occurrence.Date <= localToday)
+            {
+                throw new ApiException(StatusCodes.Status409Conflict, "occurrence_not_future", "Only a future occurrence can be completed early.");
+            }
+        }
+
+        if (action == TaskCompletionAction.Done && !allowEarly && occurrence.AvailableFromAt is not null && DateTime.UtcNow < occurrence.AvailableFromAt)
         {
             throw new ApiException(StatusCodes.Status409Conflict, "occurrence_unavailable", "Occurrence is not available yet.");
         }
@@ -67,13 +88,18 @@ public sealed class TaskActionService(DoItDbContext dbContext, IXpService xpServ
         }
 
         var status = ToStatus(action);
+        var hasActiveDone = action == TaskCompletionAction.NotApplicable && await dbContext.TaskCompletions.AnyAsync(completion =>
+            completion.OccurrenceId == occurrence.Id &&
+            completion.Action == TaskCompletionAction.Done &&
+            completion.RevertedAt == null,
+            cancellationToken);
         if (occurrence.Status == status)
         {
             return ToResponse(occurrence);
         }
 
         var now = DateTime.UtcNow;
-        occurrence.Status = status;
+        occurrence.Status = hasActiveDone ? OccurrenceStatus.Done : status;
         occurrence.UpdatedAt = now;
         var completion = new TaskCompletion
         {

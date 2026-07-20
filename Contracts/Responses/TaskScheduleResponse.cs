@@ -6,6 +6,7 @@ public sealed record TaskScheduleResponse(
     DateOnly StartDate,
     DateOnly? EndDate,
     DayOfWeek? Weekday,
+    int? WeekOfMonth,
     int? TimesPerWeek,
     int? EveryNDays,
     TimeOnly? AvailableFromTime,

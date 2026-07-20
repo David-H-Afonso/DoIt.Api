@@ -7,6 +7,7 @@ public sealed class TaskOccurrence
     public Guid Id { get; set; }
     public Guid TaskId { get; set; }
     public DateOnly Date { get; set; }
+    public string? TimeZoneId { get; set; }
     public OccurrenceStatus Status { get; set; } = OccurrenceStatus.Pending;
     public DateTime? AvailableFromAt { get; set; }
     public DateTime? AvailableUntilAt { get; set; }

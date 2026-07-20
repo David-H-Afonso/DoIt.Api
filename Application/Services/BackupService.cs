@@ -1,5 +1,6 @@
 using System.Text.Encodings.Web;
 using System.Text.Json;
+using Microsoft.Data.Sqlite;
 using DoIt.Api.Application.Interfaces;
 using DoIt.Api.Common;
 using DoIt.Api.Contracts.Requests;
@@ -100,6 +101,55 @@ public sealed class BackupService(DoItDbContext dbContext, ILogger<BackupService
         return ToResponse(user, schedule);
     }
 
+    public async Task<FullBackupResponse> RunFullNowAsync(Guid userId, CancellationToken cancellationToken)
+    {
+        var user = await GetUserAsync(userId, cancellationToken);
+        var schedule = await GetOrCreateScheduleAsync(userId, cancellationToken);
+        var now = DateTime.UtcNow;
+        var destination = Path.GetFullPath(schedule.DestinationPath, AppContext.BaseDirectory);
+        Directory.CreateDirectory(destination);
+        var fileName = $"doit-full-{now:yyyyMMdd-HHmmss}.sqlite";
+        var filePath = Path.Combine(destination, fileName);
+
+        try
+        {
+            if (dbContext.Database.GetDbConnection() is not SqliteConnection source)
+            {
+                throw new InvalidOperationException("The configured database provider does not support SQLite backups.");
+            }
+
+            await using var target = new SqliteConnection($"Data Source={filePath};Pooling=False");
+            if (source.State != System.Data.ConnectionState.Open)
+            {
+                await source.OpenAsync(cancellationToken);
+            }
+            await target.OpenAsync(cancellationToken);
+            source.BackupDatabase(target);
+            target.Close();
+            target.Dispose();
+            SqliteConnection.ClearAllPools();
+
+            ApplyRetention(destination, schedule.RetentionCount);
+            schedule.LastRunAt = now;
+            schedule.LastRunStatus = "success";
+            schedule.LastRunMessage = $"Wrote {fileName}";
+            schedule.UpdatedAt = DateTime.UtcNow;
+            await dbContext.SaveChangesAsync(cancellationToken);
+            logger.LogInformation("Full database backup written for user {UserId} to {FilePath}", user.Id, filePath);
+            return new FullBackupResponse(fileName, new FileInfo(filePath).Length, now, destination);
+        }
+        catch (Exception ex)
+        {
+            schedule.LastRunAt = now;
+            schedule.LastRunStatus = "failed";
+            schedule.LastRunMessage = ex.Message;
+            schedule.UpdatedAt = DateTime.UtcNow;
+            await dbContext.SaveChangesAsync(cancellationToken);
+            logger.LogError(ex, "Full database backup failed for user {UserId}", user.Id);
+            throw;
+        }
+    }
+
     private async Task<object> BuildBackupAsync(User user, DateTime exportedAt, CancellationToken cancellationToken)
     {
         var zones = await dbContext.Zones.Where(zone => zone.CreatedByUserId == user.Id).OrderBy(zone => zone.SortOrder).ToListAsync(cancellationToken);
@@ -116,6 +166,11 @@ public sealed class BackupService(DoItDbContext dbContext, ILogger<BackupService
         var xp = await dbContext.UserXp.FirstOrDefaultAsync(candidate => candidate.UserId == user.Id, cancellationToken);
         var xpEvents = await dbContext.XpEvents.Where(xpEvent => xpEvent.UserId == user.Id).OrderBy(xpEvent => xpEvent.CreatedAt).ToListAsync(cancellationToken);
         var theme = await dbContext.ThemePreferences.FirstOrDefaultAsync(candidate => candidate.UserId == user.Id, cancellationToken);
+        var calendarEvents = await dbContext.CalendarEvents
+            .Include(calendarEvent => calendarEvent.Reminders)
+            .Where(calendarEvent => calendarEvent.CreatedByUserId == user.Id)
+            .OrderBy(calendarEvent => calendarEvent.StartAtUtc)
+            .ToListAsync(cancellationToken);
 
         return new
         {
@@ -147,22 +202,39 @@ public sealed class BackupService(DoItDbContext dbContext, ILogger<BackupService
                     task.Schedule.StartDate,
                     task.Schedule.EndDate,
                     Weekday = task.Schedule.Weekday?.ToString(),
+                    task.Schedule.WeekOfMonth,
                     task.Schedule.TimesPerWeek,
                     task.Schedule.EveryNDays,
                     task.Schedule.AvailableFromTime,
                     task.Schedule.AvailableUntilTime,
                     task.Schedule.RecommendedTime,
+                    task.Schedule.TimeZoneId,
                     UnavailableVisibilityMode = task.Schedule.UnavailableVisibilityMode.ToString(),
                     task.Schedule.CreatedAt,
                     task.Schedule.UpdatedAt
                 },
                 assignments = task.Assignments.Select(assignment => new { assignment.Id, assignment.TaskId, assignment.UserId, Role = assignment.Role.ToString(), assignment.CreatedAt })
             }),
-            occurrences = occurrences.Select(occurrence => new { occurrence.Id, occurrence.TaskId, occurrence.Date, Status = occurrence.Status.ToString(), occurrence.AvailableFromAt, occurrence.AvailableUntilAt, occurrence.RecommendedAt, occurrence.CreatedAt, occurrence.UpdatedAt }),
+            occurrences = occurrences.Select(occurrence => new { occurrence.Id, occurrence.TaskId, occurrence.Date, occurrence.TimeZoneId, Status = occurrence.Status.ToString(), occurrence.AvailableFromAt, occurrence.AvailableUntilAt, occurrence.RecommendedAt, occurrence.CreatedAt, occurrence.UpdatedAt }),
             completions = completions.Select(completion => new { completion.Id, completion.OccurrenceId, completion.UserId, Action = completion.Action.ToString(), completion.Notes, completion.CreatedAt, completion.RevertedAt }),
             xp = xp is null ? null : new { xp.Id, xp.UserId, xp.TotalXp, xp.WeeklyXp, xp.CurrentLevel, xp.UpdatedAt },
             xpEvents = xpEvents.Select(xpEvent => new { xpEvent.Id, xpEvent.UserId, xpEvent.OccurrenceId, xpEvent.TaskId, xpEvent.CompletionId, xpEvent.Amount, xpEvent.Reason, xpEvent.Complexity, xpEvent.Importance, xpEvent.FormulaVersion, xpEvent.CreatedAt, xpEvent.RevertedAt }),
-            theme = theme is null ? null : new { theme.Id, theme.UserId, theme.ThemeMode, theme.PrimaryColor, theme.AccentColor, theme.BackgroundColor, theme.SurfaceColor, theme.TextColor, theme.BackgroundImagePath, theme.BackgroundOverlayColor, theme.BackgroundOverlayOpacity, theme.CreatedAt, theme.UpdatedAt }
+            theme = theme is null ? null : new { theme.Id, theme.UserId, theme.ThemeMode, theme.PrimaryColor, theme.AccentColor, theme.BackgroundColor, theme.SurfaceColor, theme.TextColor, theme.BackgroundImagePath, theme.BackgroundOverlayColor, theme.BackgroundOverlayOpacity, theme.CreatedAt, theme.UpdatedAt },
+            calendarEvents = calendarEvents.Select(calendarEvent => new
+            {
+                calendarEvent.Id,
+                calendarEvent.Title,
+                calendarEvent.Description,
+                calendarEvent.ZoneId,
+                calendarEvent.StartAtUtc,
+                calendarEvent.EndAtUtc,
+                calendarEvent.IsAllDay,
+                calendarEvent.TimeZoneId,
+                calendarEvent.IsCancelled,
+                calendarEvent.CreatedAt,
+                calendarEvent.UpdatedAt,
+                reminders = calendarEvent.Reminders.Select(reminder => new { reminder.Id, reminder.OffsetMinutes, reminder.IsEnabled, reminder.AcknowledgedAt, reminder.CreatedAt, reminder.UpdatedAt })
+            })
         };
     }
 
@@ -231,7 +303,10 @@ public sealed class BackupService(DoItDbContext dbContext, ILogger<BackupService
             return;
         }
 
-        foreach (var oldFile in Directory.GetFiles(destination, "*.json").OrderByDescending(File.GetCreationTimeUtc).Skip(retentionCount))
+        foreach (var oldFile in Directory.GetFiles(destination)
+            .Where(file => Path.GetExtension(file).Equals(".json", StringComparison.OrdinalIgnoreCase) || Path.GetExtension(file).Equals(".sqlite", StringComparison.OrdinalIgnoreCase))
+            .OrderByDescending(File.GetCreationTimeUtc)
+            .Skip(retentionCount))
         {
             File.Delete(oldFile);
         }

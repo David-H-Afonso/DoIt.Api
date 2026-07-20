@@ -29,9 +29,10 @@ public sealed class NowService(DoItDbContext dbContext, IOccurrenceService occur
             .ThenBy(task => task.Title)
             .ToListAsync(cancellationToken);
 
+        var visibleTasks = tasks.Where(task => MatchesScope(task, normalizedScope, userId, user.Role == UserRole.Admin)).ToList();
         var visibleItems = new List<NowItem>();
         var now = DateTime.UtcNow;
-        foreach (var task in tasks.Where(task => MatchesScope(task, normalizedScope, userId, user.Role == UserRole.Admin)))
+        foreach (var task in visibleTasks)
         {
             var classified = Classify(task, targetDate, GetCurrentTime(task.Schedule?.TimeZoneId, targetDate));
             if (classified is null)
@@ -58,7 +59,56 @@ public sealed class NowService(DoItDbContext dbContext, IOccurrenceService occur
             .Select(group => BuildZone(group.Key.ZoneId, group.Key.ZoneName, group))
             .ToList();
 
-        return new NowResponse(targetDate, normalizedScope, BuildProgress(visibleItems.Select(item => item.Occurrence)), zones);
+        var upcoming = await BuildUpcomingAsync(visibleTasks, targetDate, now, cancellationToken);
+        return new NowResponse(targetDate, normalizedScope, BuildProgress(visibleItems.Select(item => item.Occurrence)), zones, upcoming);
+    }
+
+    private async Task<IReadOnlyList<NowTaskResponse>> BuildUpcomingAsync(IReadOnlyList<DoItTask> tasks, DateOnly targetDate, DateTime now, CancellationToken cancellationToken)
+    {
+        var upcoming = new List<NowTaskResponse>();
+        foreach (var task in tasks)
+        {
+            if (task.Schedule is null)
+            {
+                continue;
+            }
+
+            if (task.Schedule.RecurrenceType == RecurrenceType.Manual && task.Schedule.StartDate > targetDate)
+            {
+                var futureOccurrence = await occurrenceService.GetOrCreateAsync(task, task.Schedule.StartDate, now, cancellationToken);
+                if (futureOccurrence.Status == OccurrenceStatus.Pending)
+                {
+                    upcoming.Add(ToTaskResponse(new NowItem(task, futureOccurrence, "upcoming")));
+                }
+
+                continue;
+            }
+
+            if (task.Schedule.RecurrenceType == RecurrenceType.Manual)
+            {
+                continue;
+            }
+
+            for (var offset = 1; offset <= 62; offset++)
+            {
+                var date = targetDate.AddDays(offset);
+                if (!AppliesOnDate(task, task.Schedule, date))
+                {
+                    continue;
+                }
+
+                var occurrence = await occurrenceService.GetOrCreateAsync(task, date, now, cancellationToken);
+                if (occurrence.Status != OccurrenceStatus.Pending)
+                {
+                    continue;
+                }
+
+                upcoming.Add(ToTaskResponse(new NowItem(task, occurrence, "upcoming")));
+                break;
+            }
+        }
+
+        return upcoming;
     }
 
     private static NowZoneResponse BuildZone(Guid? zoneId, string zoneName, IEnumerable<NowItem> items)
@@ -76,6 +126,14 @@ public sealed class NowService(DoItDbContext dbContext, IOccurrenceService occur
     private static NowTaskResponse ToTaskResponse(NowItem item)
     {
         var schedule = item.Task.Schedule;
+        var completed = item.Occurrence.Completions
+            .Where(completion => completion.RevertedAt is null && completion.Action == TaskCompletionAction.Done)
+            .OrderByDescending(completion => completion.CreatedAt)
+            .FirstOrDefault();
+        DateTime? completedAt = completed is null ? null : DateTime.SpecifyKind(completed.CreatedAt, DateTimeKind.Utc);
+        var completionTiming = completedAt is not null && DateOnly.FromDateTime(TimeZoneInfo.ConvertTimeFromUtc(completedAt.Value, TimeZoneHelper.Find(item.Occurrence.TimeZoneId ?? schedule?.TimeZoneId))).DayNumber < item.Occurrence.Date.DayNumber
+            ? "Early"
+            : null;
         return new NowTaskResponse(
             item.Occurrence.Id,
             item.Task.Id,
@@ -88,6 +146,9 @@ public sealed class NowService(DoItDbContext dbContext, IOccurrenceService occur
             item.Task.Assignments.Select(assignment => assignment.User?.DisplayName ?? string.Empty).Where(name => !string.IsNullOrWhiteSpace(name)).ToList(),
             item.Status,
             item.Occurrence.Status.ToString(),
+            item.Occurrence.Date,
+            completionTiming,
+            completedAt,
             schedule?.AvailableFromTime,
             schedule?.AvailableUntilTime,
             schedule?.RecommendedTime,
@@ -145,6 +206,7 @@ public sealed class NowService(DoItDbContext dbContext, IOccurrenceService occur
             RecurrenceType.Weekday => schedule.Weekday == date.DayOfWeek,
             RecurrenceType.TimesPerWeek => true,
             RecurrenceType.EveryNDays => schedule.EveryNDays is > 0 && (date.DayNumber - schedule.StartDate.DayNumber) % schedule.EveryNDays.Value == 0,
+            RecurrenceType.MonthlyOrdinalWeekday => schedule.Weekday == date.DayOfWeek && ((date.Day - 1) / 7) + 1 == schedule.WeekOfMonth,
             _ => task.TaskType == TaskType.Routine
         };
     }
