@@ -1,0 +1,202 @@
+using DoIt.Api.Application.Interfaces;
+using DoIt.Api.Common;
+using DoIt.Api.Contracts.Responses;
+using DoIt.Api.Domain.Entities;
+using DoIt.Api.Domain.Enums;
+using DoIt.Api.Infrastructure.Persistence;
+using Microsoft.EntityFrameworkCore;
+
+namespace DoIt.Api.Application.Services;
+
+public sealed class NowService(DoItDbContext dbContext, IOccurrenceService occurrenceService) : INowService
+{
+    private const string GeneralZoneName = "General";
+
+    public async Task<NowResponse> GetNowAsync(Guid userId, DateOnly? date, string? scope, CancellationToken cancellationToken)
+    {
+        var targetDate = date ?? DateOnly.FromDateTime(DateTime.UtcNow);
+        var normalizedScope = NormalizeScope(scope);
+            var user = await dbContext.Users.FirstAsync(candidate => candidate.Id == userId, cancellationToken);
+
+        var tasks = await dbContext.Tasks
+            .Include(task => task.Zone)
+            .Include(task => task.Schedule)
+            .Include(task => task.Assignments)
+            .ThenInclude(assignment => assignment.User)
+            .Where(task => !task.IsArchived)
+            .OrderBy(task => task.Zone == null ? int.MaxValue : task.Zone.SortOrder)
+            .ThenBy(task => task.Zone == null ? GeneralZoneName : task.Zone.Name)
+            .ThenBy(task => task.Title)
+            .ToListAsync(cancellationToken);
+
+        var visibleItems = new List<NowItem>();
+        var now = DateTime.UtcNow;
+        foreach (var task in tasks.Where(task => MatchesScope(task, normalizedScope, userId, user.Role == UserRole.Admin)))
+        {
+            var classified = Classify(task, targetDate, GetCurrentTime(task.Schedule?.TimeZoneId, targetDate));
+            if (classified is null)
+            {
+                continue;
+            }
+
+            var occurrenceDate = task.Schedule?.RecurrenceType == RecurrenceType.Manual && task.Schedule.StartDate < targetDate
+                ? task.Schedule.StartDate
+                : targetDate;
+            var occurrence = await occurrenceService.GetOrCreateAsync(task, occurrenceDate, now, cancellationToken);
+            if (normalizedScope == "me" && task.AssignmentMode == AssignmentMode.AllAssignees && await UserAlreadyCompletedAsync(userId, occurrence.Id, cancellationToken))
+            {
+                continue;
+            }
+
+            visibleItems.Add(classified with { Occurrence = occurrence });
+        }
+
+        var zones = visibleItems
+            .GroupBy(item => new { item.Task.ZoneId, ZoneName = item.Task.Zone?.Name ?? GeneralZoneName, SortOrder = item.Task.Zone?.SortOrder ?? int.MaxValue })
+            .OrderBy(group => group.Key.SortOrder)
+            .ThenBy(group => group.Key.ZoneName)
+            .Select(group => BuildZone(group.Key.ZoneId, group.Key.ZoneName, group))
+            .ToList();
+
+        return new NowResponse(targetDate, normalizedScope, BuildProgress(visibleItems.Select(item => item.Occurrence)), zones);
+    }
+
+    private static NowZoneResponse BuildZone(Guid? zoneId, string zoneName, IEnumerable<NowItem> items)
+    {
+        var itemList = items.ToList();
+        var pending = itemList.Where(item => item.Occurrence.Status == OccurrenceStatus.Pending).ToList();
+        var overdue = pending.Where(item => item.Status == "overdue").Select(ToTaskResponse).ToList();
+        var available = pending.Where(item => item.Status == "available").Select(ToTaskResponse).ToList();
+        var unavailable = pending.Where(item => item.Status == "unavailable").Select(ToTaskResponse).ToList();
+        var completed = itemList.Where(item => item.Occurrence.Status != OccurrenceStatus.Pending).Select(ToTaskResponse).ToList();
+
+        return new NowZoneResponse(zoneId, zoneName, BuildProgress(itemList.Select(item => item.Occurrence)), overdue, available, unavailable, completed);
+    }
+
+    private static NowTaskResponse ToTaskResponse(NowItem item)
+    {
+        var schedule = item.Task.Schedule;
+        return new NowTaskResponse(
+            item.Occurrence.Id,
+            item.Task.Id,
+            item.Task.Title,
+            item.Task.ZoneId,
+            item.Task.Zone?.Name,
+            item.Task.Scope.ToString(),
+            item.Task.AssignmentMode.ToString(),
+            item.Task.Assignments.Select(assignment => assignment.UserId).ToList(),
+            item.Task.Assignments.Select(assignment => assignment.User?.DisplayName ?? string.Empty).Where(name => !string.IsNullOrWhiteSpace(name)).ToList(),
+            item.Status,
+            item.Occurrence.Status.ToString(),
+            schedule?.AvailableFromTime,
+            schedule?.AvailableUntilTime,
+            schedule?.RecommendedTime,
+            schedule?.TimeZoneId ?? "UTC");
+    }
+
+    private static NowProgressResponse BuildProgress(IEnumerable<TaskOccurrence> occurrences)
+    {
+        var occurrenceList = occurrences.ToList();
+        var done = occurrenceList.Count(occurrence => occurrence.Status == OccurrenceStatus.Done);
+        var missed = occurrenceList.Count(occurrence => occurrence.Status == OccurrenceStatus.Missed);
+        var notApplicable = occurrenceList.Count(occurrence => occurrence.Status == OccurrenceStatus.NotApplicable);
+        var pending = occurrenceList.Count(occurrence => occurrence.Status == OccurrenceStatus.Pending);
+        return new NowProgressResponse(occurrenceList.Count, done, missed, notApplicable, pending);
+    }
+
+    private static NowItem? Classify(DoItTask task, DateOnly date, TimeOnly currentTime)
+    {
+        var schedule = task.Schedule;
+        if (schedule is null || !AppliesOnDate(task, schedule, date))
+        {
+            return null;
+        }
+
+        if (schedule.RecurrenceType == RecurrenceType.Manual && schedule.StartDate < date)
+        {
+            return new NowItem(task, null!, "overdue");
+        }
+
+        if (schedule.AvailableFromTime is not null && currentTime < schedule.AvailableFromTime)
+        {
+            return schedule.UnavailableVisibilityMode == UnavailableVisibilityMode.Hidden ? null : new NowItem(task, null!, "unavailable");
+        }
+
+        if (schedule.AvailableUntilTime is not null && currentTime > schedule.AvailableUntilTime)
+        {
+            return new NowItem(task, null!, "overdue");
+        }
+
+        return new NowItem(task, null!, "available");
+    }
+
+    private static bool AppliesOnDate(DoItTask task, TaskSchedule schedule, DateOnly date)
+    {
+        if (date < schedule.StartDate || schedule.EndDate is not null && date > schedule.EndDate)
+        {
+            return false;
+        }
+
+        return schedule.RecurrenceType switch
+        {
+            RecurrenceType.Manual => date >= schedule.StartDate,
+            RecurrenceType.Daily => true,
+            RecurrenceType.Weekly => date.DayOfWeek == schedule.StartDate.DayOfWeek,
+            RecurrenceType.Weekday => schedule.Weekday == date.DayOfWeek,
+            RecurrenceType.TimesPerWeek => true,
+            RecurrenceType.EveryNDays => schedule.EveryNDays is > 0 && (date.DayNumber - schedule.StartDate.DayNumber) % schedule.EveryNDays.Value == 0,
+            _ => task.TaskType == TaskType.Routine
+        };
+    }
+
+    private static TimeOnly GetCurrentTime(string? timeZoneId, DateOnly targetDate)
+    {
+        if (targetDate != DateOnly.FromDateTime(DateTime.UtcNow))
+        {
+            return new TimeOnly(12, 0);
+        }
+
+        return TimeOnly.FromDateTime(TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, TimeZoneHelper.Find(timeZoneId)));
+    }
+
+    private async Task<bool> UserAlreadyCompletedAsync(Guid userId, Guid occurrenceId, CancellationToken cancellationToken)
+    {
+        return await dbContext.TaskCompletions.AnyAsync(completion =>
+            completion.OccurrenceId == occurrenceId &&
+            completion.UserId == userId &&
+            completion.Action == TaskCompletionAction.Done &&
+            completion.RevertedAt == null,
+            cancellationToken);
+    }
+
+    private static bool MatchesScope(DoItTask task, string scope, Guid userId, bool isAdmin)
+    {
+        return scope switch
+        {
+            "house" => task.Scope == TaskScope.House && CanSeeHouseTask(task, userId, isAdmin, includeAnyone: true),
+            "all" => task.Scope == TaskScope.Personal && task.CreatedByUserId == userId || task.Scope == TaskScope.House && CanSeeHouseTask(task, userId, isAdmin, includeAnyone: true),
+            _ => task.Scope == TaskScope.Personal && task.CreatedByUserId == userId || task.Scope == TaskScope.House && CanSeeHouseTask(task, userId, isAdmin, includeAnyone: true)
+        };
+    }
+
+    private static bool CanSeeHouseTask(DoItTask task, Guid userId, bool isAdmin, bool includeAnyone)
+    {
+        if (isAdmin)
+        {
+            return true;
+        }
+
+        return task.AssignmentMode == AssignmentMode.Anyone && includeAnyone || task.Assignments.Any(assignment => assignment.UserId == userId);
+    }
+
+    private static string NormalizeScope(string? scope)
+    {
+        return string.Equals(scope, "house", StringComparison.OrdinalIgnoreCase)
+            ? "house"
+            : string.Equals(scope, "all", StringComparison.OrdinalIgnoreCase)
+                ? "all"
+                : "me";
+    }
+
+    private sealed record NowItem(DoItTask Task, TaskOccurrence Occurrence, string Status);
+}

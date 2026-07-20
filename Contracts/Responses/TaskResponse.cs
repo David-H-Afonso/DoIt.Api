@@ -1,0 +1,24 @@
+namespace DoIt.Api.Contracts.Responses;
+
+public sealed record TaskResponse(
+    Guid Id,
+    string Title,
+    string? Description,
+    Guid? ZoneId,
+    string? ZoneName,
+    string Scope,
+    string TaskType,
+    string Importance,
+    string Complexity,
+    string Obligation,
+    string AssignmentMode,
+    IReadOnlyList<Guid> AssigneeIds,
+    bool IsArchived,
+    Guid CreatedByUserId,
+    DateTime CreatedAt,
+    DateTime UpdatedAt,
+    TaskScheduleResponse? Schedule,
+    string? OccurrenceStatus,
+    DateOnly? OccurrenceDate,
+    DateTime? OccurrenceCompletedAt,
+    Guid? OccurrenceId);
