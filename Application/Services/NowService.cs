@@ -64,61 +64,7 @@ public sealed class NowService(DoItDbContext dbContext, IOccurrenceService occur
             .Select(group => BuildZone(group.Key.ZoneId, group.Key.ZoneName, group))
             .ToList();
 
-        var upcoming = await BuildUpcomingAsync(visibleTasks, targetDate, now, cancellationToken);
-        return new NowResponse(targetDate, normalizedScope, BuildProgress(visibleItems.Select(item => item.Occurrence)), zones, upcoming);
-    }
-
-    private async Task<IReadOnlyList<NowTaskResponse>> BuildUpcomingAsync(IReadOnlyList<DoItTask> tasks, DateOnly targetDate, DateTime now, CancellationToken cancellationToken)
-    {
-        var upcoming = new List<NowTaskResponse>();
-        foreach (var task in tasks)
-        {
-            if (task.Schedule?.RecurrenceType == RecurrenceType.TimesPerWeek && await WeeklyTargetReachedAsync(task, targetDate, cancellationToken))
-            {
-                continue;
-            }
-
-            if (task.Schedule is null)
-            {
-                continue;
-            }
-
-            if (task.Schedule.RecurrenceType == RecurrenceType.Manual && task.Schedule.StartDate > targetDate)
-            {
-                var futureOccurrence = await occurrenceService.GetOrCreateAsync(task, task.Schedule.StartDate, now, cancellationToken);
-                if (futureOccurrence.Status == OccurrenceStatus.Pending)
-                {
-                    upcoming.Add(ToTaskResponse(new NowItem(task, futureOccurrence, "upcoming")));
-                }
-
-                continue;
-            }
-
-            if (task.Schedule.RecurrenceType == RecurrenceType.Manual)
-            {
-                continue;
-            }
-
-            for (var offset = 1; offset <= 62; offset++)
-            {
-                var date = targetDate.AddDays(offset);
-                if (!AppliesOnDate(task, task.Schedule, date))
-                {
-                    continue;
-                }
-
-                var occurrence = await occurrenceService.GetOrCreateAsync(task, date, now, cancellationToken);
-                if (occurrence.Status != OccurrenceStatus.Pending)
-                {
-                    continue;
-                }
-
-                upcoming.Add(ToTaskResponse(new NowItem(task, occurrence, "upcoming")));
-                break;
-            }
-        }
-
-        return upcoming;
+        return new NowResponse(targetDate, normalizedScope, BuildProgress(visibleItems.Select(item => item.Occurrence)), zones, []);
     }
 
     private static NowZoneResponse BuildZone(Guid? zoneId, string zoneName, IEnumerable<NowItem> items)
