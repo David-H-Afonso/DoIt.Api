@@ -73,6 +73,11 @@ public sealed class NowService(DoItDbContext dbContext, IOccurrenceService occur
         var upcoming = new List<NowTaskResponse>();
         foreach (var task in tasks)
         {
+            if (task.Schedule?.RecurrenceType == RecurrenceType.TimesPerWeek && await WeeklyTargetReachedAsync(task, targetDate, cancellationToken))
+            {
+                continue;
+            }
+
             if (task.Schedule is null)
             {
                 continue;
