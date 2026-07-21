@@ -45,11 +45,11 @@ public sealed class ReviewService(DoItDbContext dbContext, IOccurrenceService oc
             .ToList();
         var today = DateOnly.FromDateTime(DateTime.UtcNow);
         var notDone = visible
-            .Where(occurrence => occurrence.Date == date && date <= today && (ActiveCompletion(occurrence) is null || ActiveCompletion(occurrence)!.Action == TaskCompletionAction.Missed))
+            .Where(occurrence => occurrence.Date == date && IsNotDoneForReview(occurrence, date, today))
             .Select(occurrence => ToItem(occurrence, xpByCompletion))
             .ToList();
         var futurePending = visible
-            .Where(occurrence => occurrence.Date == date && date > today && ActiveCompletion(occurrence) is null)
+            .Where(occurrence => occurrence.Date == date && date > today && occurrence.Status == OccurrenceStatus.Pending && ActiveCompletion(occurrence) is null)
             .Select(occurrence => ToItem(occurrence, xpByCompletion))
             .ToList();
         var created = new List<ReviewTaskResponse>();
@@ -115,6 +115,18 @@ public sealed class ReviewService(DoItDbContext dbContext, IOccurrenceService oc
     }
 
     private static bool IsDate(DateTime value, DateOnly date) => DateOnly.FromDateTime(value) == date;
+
+    private static bool IsNotDoneForReview(TaskOccurrence occurrence, DateOnly date, DateOnly today)
+    {
+        var activeCompletion = ActiveCompletion(occurrence);
+        var isExplicitMiss = activeCompletion?.Action == TaskCompletionAction.Missed;
+        if (occurrence.Task?.Schedule?.RecurrenceType == RecurrenceType.TimesPerWeek)
+        {
+            return (date < today || isExplicitMiss) && (occurrence.Status == OccurrenceStatus.Missed || isExplicitMiss);
+        }
+
+        return (date < today || isExplicitMiss) && (activeCompletion is null || isExplicitMiss);
+    }
 
     private static bool CanSee(DoItTask task, Guid userId, bool isAdmin)
     {

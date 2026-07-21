@@ -77,6 +77,7 @@ public sealed class TaskActionService(DoItDbContext dbContext, IXpService xpServ
             }
         }
 
+
         if (action == TaskCompletionAction.Done && !allowEarly && occurrence.AvailableFromAt is not null && DateTime.UtcNow < occurrence.AvailableFromAt)
         {
             throw new ApiException(StatusCodes.Status409Conflict, "occurrence_unavailable", "Occurrence is not available yet.");

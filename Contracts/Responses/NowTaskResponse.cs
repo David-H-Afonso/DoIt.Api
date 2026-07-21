@@ -18,4 +18,5 @@ public sealed record NowTaskResponse(
     TimeOnly? AvailableFromTime,
     TimeOnly? AvailableUntilTime,
     TimeOnly? RecommendedTime,
-    string TimeZoneId);
+    string TimeZoneId,
+    string RecurrenceType);

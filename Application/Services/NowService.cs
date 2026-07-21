@@ -34,6 +34,11 @@ public sealed class NowService(DoItDbContext dbContext, IOccurrenceService occur
         var now = DateTime.UtcNow;
         foreach (var task in visibleTasks)
         {
+            if (task.Schedule?.RecurrenceType == RecurrenceType.TimesPerWeek && await WeeklyTargetReachedAsync(task, targetDate, cancellationToken))
+            {
+                continue;
+            }
+
             var classified = Classify(task, targetDate, GetCurrentTime(task.Schedule?.TimeZoneId, targetDate));
             if (classified is null)
             {
@@ -115,10 +120,10 @@ public sealed class NowService(DoItDbContext dbContext, IOccurrenceService occur
     {
         var itemList = items.ToList();
         var pending = itemList.Where(item => item.Occurrence.Status == OccurrenceStatus.Pending).ToList();
-        var overdue = pending.Where(item => item.Status == "overdue").Select(ToTaskResponse).ToList();
+        var overdue = itemList.Where(item => item.Status == "overdue" || IsWeeklyMissed(item)).Select(ToTaskResponse).ToList();
         var available = pending.Where(item => item.Status == "available").Select(ToTaskResponse).ToList();
         var unavailable = pending.Where(item => item.Status == "unavailable").Select(ToTaskResponse).ToList();
-        var completed = itemList.Where(item => item.Occurrence.Status != OccurrenceStatus.Pending).Select(ToTaskResponse).ToList();
+        var completed = itemList.Where(item => item.Occurrence.Status != OccurrenceStatus.Pending && !IsWeeklyMissed(item)).Select(ToTaskResponse).ToList();
 
         return new NowZoneResponse(zoneId, zoneName, BuildProgress(itemList.Select(item => item.Occurrence)), overdue, available, unavailable, completed);
     }
@@ -152,7 +157,8 @@ public sealed class NowService(DoItDbContext dbContext, IOccurrenceService occur
             schedule?.AvailableFromTime,
             schedule?.AvailableUntilTime,
             schedule?.RecommendedTime,
-            schedule?.TimeZoneId ?? "UTC");
+            schedule?.TimeZoneId ?? "UTC",
+            schedule?.RecurrenceType.ToString() ?? RecurrenceType.Manual.ToString());
     }
 
     private static NowProgressResponse BuildProgress(IEnumerable<TaskOccurrence> occurrences)
@@ -209,6 +215,35 @@ public sealed class NowService(DoItDbContext dbContext, IOccurrenceService occur
             RecurrenceType.MonthlyOrdinalWeekday => schedule.Weekday == date.DayOfWeek && ((date.Day - 1) / 7) + 1 == schedule.WeekOfMonth,
             _ => task.TaskType == TaskType.Routine
         };
+    }
+
+    private async Task<bool> WeeklyTargetReachedAsync(DoItTask task, DateOnly date, CancellationToken cancellationToken)
+    {
+        var schedule = task.Schedule;
+        if (schedule?.TimesPerWeek is not > 0)
+        {
+            return false;
+        }
+
+        var weekStart = StartOfWeek(date);
+        var weekEnd = StartOfWeek(date).AddDays(6);
+        if (schedule.EndDate is not null)
+        {
+            weekEnd = schedule.EndDate.Value < weekEnd ? schedule.EndDate.Value : weekEnd;
+        }
+
+        var completed = await dbContext.TaskOccurrences
+            .Where(occurrence => occurrence.TaskId == task.Id && occurrence.Date >= weekStart && occurrence.Date <= weekEnd && occurrence.Status == OccurrenceStatus.Done)
+            .CountAsync(cancellationToken);
+        return completed >= schedule.TimesPerWeek.Value;
+    }
+
+    private static bool IsWeeklyMissed(NowItem item) => item.Task.Schedule?.RecurrenceType == RecurrenceType.TimesPerWeek && item.Occurrence.Status == OccurrenceStatus.Missed;
+
+    private static DateOnly StartOfWeek(DateOnly date)
+    {
+        var offset = ((int)date.DayOfWeek + 6) % 7;
+        return date.AddDays(-offset);
     }
 
     private static TimeOnly GetCurrentTime(string? timeZoneId, DateOnly targetDate)

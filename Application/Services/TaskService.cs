@@ -222,6 +222,7 @@ public sealed class TaskService(DoItDbContext dbContext, IOccurrenceService occu
         }
     }
 
+
     private static TaskSchedule CreateSchedule(TaskScheduleRequest? request, DateTime now)
     {
         var schedule = new TaskSchedule { Id = Guid.NewGuid(), CreatedAt = now };

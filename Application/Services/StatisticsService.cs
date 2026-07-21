@@ -67,7 +67,7 @@ public sealed class StatisticsService(DoItDbContext dbContext) : IStatisticsServ
                 }
 
                 var record = ToRecord(task, occurrence, occurrence.Date, today);
-                if (record.Status == "Done")
+                if (record.Status is "Done" or "Missed" or "NotApplicable")
                 {
                     records.Add(record);
                 }
@@ -185,7 +185,9 @@ public sealed class StatisticsService(DoItDbContext dbContext) : IStatisticsServ
         var pending = Math.Max(0, scheduled - completed - notApplicable - missed);
         if (timesPerWeek is > 0)
         {
-            missed = Math.Max(0, scheduled - completed - notApplicable - pending);
+            pending = Math.Max(0, scheduled - completed - missed);
+            var weeklyRate = scheduled == 0 ? 0 : Math.Round((decimal)completed / scheduled * 100, 1);
+            return new StatisticsSummaryResponse(scheduled, completed, early, late, overdue, missed, notApplicable, pending, weeklyRate);
         }
 
         var denominator = Math.Max(0, scheduled - notApplicable - pending);
