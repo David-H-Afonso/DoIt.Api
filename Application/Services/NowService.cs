@@ -64,19 +64,33 @@ public sealed class NowService(DoItDbContext dbContext, IOccurrenceService occur
             .Select(group => BuildZone(group.Key.ZoneId, group.Key.ZoneName, group))
             .ToList();
 
-        return new NowResponse(targetDate, normalizedScope, BuildProgress(visibleItems.Select(item => item.Occurrence)), zones, []);
+        var upcomingToday = SortTasks(visibleItems
+            .Where(item => item.Status == "unavailable" && item.Occurrence.Status == OccurrenceStatus.Pending)
+            .Select(item => ToTaskResponse(new NowItem(item.Task, item.Occurrence, "upcoming"))));
+        return new NowResponse(targetDate, normalizedScope, BuildProgress(visibleItems.Select(item => item.Occurrence)), zones, upcomingToday);
     }
 
     private static NowZoneResponse BuildZone(Guid? zoneId, string zoneName, IEnumerable<NowItem> items)
     {
         var itemList = items.ToList();
         var pending = itemList.Where(item => item.Occurrence.Status == OccurrenceStatus.Pending).ToList();
-        var overdue = itemList.Where(item => item.Status == "overdue" || IsWeeklyMissed(item)).Select(ToTaskResponse).ToList();
-        var available = pending.Where(item => item.Status == "available").Select(ToTaskResponse).ToList();
-        var unavailable = pending.Where(item => item.Status == "unavailable").Select(ToTaskResponse).ToList();
+        var overdue = SortTasks(itemList.Where(item => item.Status == "overdue" || IsWeeklyMissed(item)).Select(ToTaskResponse));
+        var available = SortTasks(pending.Where(item => item.Status == "available").Select(ToTaskResponse));
+        var unavailable = Array.Empty<NowTaskResponse>();
         var completed = itemList.Where(item => item.Occurrence.Status != OccurrenceStatus.Pending && !IsWeeklyMissed(item)).Select(ToTaskResponse).ToList();
 
         return new NowZoneResponse(zoneId, zoneName, BuildProgress(itemList.Select(item => item.Occurrence)), overdue, available, unavailable, completed);
+    }
+
+    private static IReadOnlyList<NowTaskResponse> SortTasks(IEnumerable<NowTaskResponse> tasks)
+    {
+        return tasks
+            .OrderBy(task => task.RecurrenceType == "Manual" ? 2 : task.RecommendedTime is not null || task.AvailableFromTime is not null || task.AvailableUntilTime is not null ? 0 : 1)
+            .ThenBy(task => task.Status is "upcoming" or "unavailable"
+                ? task.AvailableFromTime ?? task.RecommendedTime ?? task.AvailableUntilTime ?? TimeOnly.MaxValue
+                : task.RecommendedTime ?? task.AvailableFromTime ?? task.AvailableUntilTime ?? TimeOnly.MaxValue)
+            .ThenBy(task => task.Title)
+            .ToList();
     }
 
     private static NowTaskResponse ToTaskResponse(NowItem item)
