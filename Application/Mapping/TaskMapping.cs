@@ -42,6 +42,7 @@ public static class TaskMapping
             null,
             null,
             null,
+            null,
             null);
     }
 

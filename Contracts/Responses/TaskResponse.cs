@@ -21,4 +21,5 @@ public sealed record TaskResponse(
     string? OccurrenceStatus,
     DateOnly? OccurrenceDate,
     DateTime? OccurrenceCompletedAt,
-    Guid? OccurrenceId);
+    Guid? OccurrenceId,
+    Guid? OccurrenceCompletedByUserId = null);

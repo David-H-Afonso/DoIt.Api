@@ -12,6 +12,7 @@ public sealed class OccurrenceService(DoItDbContext dbContext) : IOccurrenceServ
     {
         var occurrence = await dbContext.TaskOccurrences
             .Include(candidate => candidate.Completions)
+            .ThenInclude(completion => completion.User)
             .FirstOrDefaultAsync(candidate => candidate.TaskId == task.Id && candidate.Date == date, cancellationToken);
         if (occurrence is not null)
         {

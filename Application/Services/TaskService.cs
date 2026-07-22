@@ -14,38 +14,17 @@ public sealed class TaskService(DoItDbContext dbContext, IOccurrenceService occu
 {
     public async Task<IReadOnlyList<TaskResponse>> ListAsync(Guid userId, CancellationToken cancellationToken)
     {
-        var tasks = await QueryUserTasks(userId)
+        var tasks = await QueryVisibleTasks(userId)
             .OrderBy(task => task.IsArchived)
             .ThenBy(task => task.Zone == null ? int.MaxValue : task.Zone.SortOrder)
             .ThenBy(task => task.Title)
             .ToListAsync(cancellationToken);
 
         var responses = new List<TaskResponse>(tasks.Count);
+        var now = DateTime.UtcNow;
         foreach (var task in tasks)
         {
-            var response = task.ToResponse();
-            if (task.Schedule?.RecurrenceType == RecurrenceType.Manual)
-            {
-                var date = task.Schedule.StartDate;
-                var occurrence = await dbContext.TaskOccurrences
-                    .Include(candidate => candidate.Completions)
-                    .FirstOrDefaultAsync(candidate => candidate.TaskId == task.Id && candidate.Date == date, cancellationToken);
-                occurrence ??= await occurrenceService.GetOrCreateAsync(task, date, DateTime.UtcNow, cancellationToken);
-                var completion = occurrence?.Completions
-                    .Where(candidate => candidate.RevertedAt == null && candidate.Action == TaskCompletionAction.Done)
-                    .OrderByDescending(candidate => candidate.CreatedAt)
-                    .FirstOrDefault();
-                responses.Add(response with
-                {
-                    OccurrenceDate = date,
-                    OccurrenceStatus = occurrence?.Status.ToString() ?? OccurrenceStatus.Pending.ToString(),
-                    OccurrenceCompletedAt = completion?.CreatedAt,
-                    OccurrenceId = occurrence?.Id
-                });
-                continue;
-            }
-
-            responses.Add(response);
+            responses.Add(await AddCurrentOccurrenceAsync(task, now, cancellationToken));
         }
 
         return responses;
@@ -53,34 +32,13 @@ public sealed class TaskService(DoItDbContext dbContext, IOccurrenceService occu
 
     public async Task<TaskResponse> GetAsync(Guid userId, Guid taskId, CancellationToken cancellationToken)
     {
-        var task = await QueryUserTasks(userId).FirstOrDefaultAsync(candidate => candidate.Id == taskId, cancellationToken);
+        var task = await QueryVisibleTasks(userId).FirstOrDefaultAsync(candidate => candidate.Id == taskId, cancellationToken);
         if (task is null)
         {
             throw new ApiException(StatusCodes.Status404NotFound, "task_not_found", "Task not found.");
         }
 
-        var response = task.ToResponse();
-        if (task.Schedule?.RecurrenceType != RecurrenceType.Manual)
-        {
-            return response;
-        }
-
-        var date = task.Schedule.StartDate;
-        var occurrence = await dbContext.TaskOccurrences
-            .Include(candidate => candidate.Completions)
-            .FirstOrDefaultAsync(candidate => candidate.TaskId == task.Id && candidate.Date == date, cancellationToken);
-        occurrence ??= await occurrenceService.GetOrCreateAsync(task, date, DateTime.UtcNow, cancellationToken);
-        var completion = occurrence.Completions
-            .Where(candidate => candidate.RevertedAt is null && candidate.Action == TaskCompletionAction.Done)
-            .OrderByDescending(candidate => candidate.CreatedAt)
-            .FirstOrDefault();
-        return response with
-        {
-            OccurrenceDate = date,
-            OccurrenceStatus = occurrence.Status.ToString(),
-            OccurrenceCompletedAt = completion?.CreatedAt,
-            OccurrenceId = occurrence.Id
-        };
+        return await AddCurrentOccurrenceAsync(task, DateTime.UtcNow, cancellationToken);
     }
 
     public async Task<TaskResponse> CreateAsync(Guid userId, CreateTaskRequest request, CancellationToken cancellationToken)
@@ -88,7 +46,7 @@ public sealed class TaskService(DoItDbContext dbContext, IOccurrenceService occu
         ValidateTitle(request.Title);
         var title = request.Title.Trim();
         var normalizedTitle = title.ToLowerInvariant();
-        if (await QueryUserTasks(userId).AnyAsync(task => task.Title.ToLower() == normalizedTitle, cancellationToken))
+        if (await QueryOwnedTasks(userId).AnyAsync(task => task.Title.ToLower() == normalizedTitle, cancellationToken))
         {
             throw new ApiException(StatusCodes.Status409Conflict, "task_exists", "A task with this title already exists.");
         }
@@ -128,7 +86,7 @@ public sealed class TaskService(DoItDbContext dbContext, IOccurrenceService occu
         ValidateTitle(request.Title);
         await ValidateZoneAsync(userId, request.ZoneId, cancellationToken);
 
-        var task = await QueryUserTasks(userId).FirstOrDefaultAsync(candidate => candidate.Id == taskId, cancellationToken);
+        var task = await QueryOwnedTasks(userId).FirstOrDefaultAsync(candidate => candidate.Id == taskId, cancellationToken);
         if (task is null)
         {
             throw new ApiException(StatusCodes.Status404NotFound, "task_not_found", "Task not found.");
@@ -163,7 +121,7 @@ public sealed class TaskService(DoItDbContext dbContext, IOccurrenceService occu
 
     public async Task ArchiveAsync(Guid userId, Guid taskId, CancellationToken cancellationToken)
     {
-        var task = await QueryUserTasks(userId).FirstOrDefaultAsync(candidate => candidate.Id == taskId, cancellationToken);
+        var task = await QueryOwnedTasks(userId).FirstOrDefaultAsync(candidate => candidate.Id == taskId, cancellationToken);
         if (task is null)
         {
             return;
@@ -176,7 +134,7 @@ public sealed class TaskService(DoItDbContext dbContext, IOccurrenceService occu
 
     public async Task DeleteAsync(Guid userId, Guid taskId, CancellationToken cancellationToken)
     {
-        var task = await QueryUserTasks(userId).FirstOrDefaultAsync(candidate => candidate.Id == taskId, cancellationToken);
+        var task = await QueryOwnedTasks(userId).FirstOrDefaultAsync(candidate => candidate.Id == taskId, cancellationToken);
         if (task is null)
         {
             return;
@@ -188,7 +146,7 @@ public sealed class TaskService(DoItDbContext dbContext, IOccurrenceService occu
 
     public async Task RestoreAsync(Guid userId, Guid taskId, CancellationToken cancellationToken)
     {
-        var task = await QueryUserTasks(userId).FirstOrDefaultAsync(candidate => candidate.Id == taskId, cancellationToken);
+        var task = await QueryOwnedTasks(userId).FirstOrDefaultAsync(candidate => candidate.Id == taskId, cancellationToken);
         if (task is null)
         {
             return;
@@ -199,13 +157,51 @@ public sealed class TaskService(DoItDbContext dbContext, IOccurrenceService occu
         await dbContext.SaveChangesAsync(cancellationToken);
     }
 
-    private IQueryable<DoItTask> QueryUserTasks(Guid userId)
+    private IQueryable<DoItTask> QueryOwnedTasks(Guid userId)
     {
         return dbContext.Tasks
             .Include(task => task.Zone)
             .Include(task => task.Schedule)
             .Include(task => task.Assignments)
             .Where(task => task.CreatedByUserId == userId);
+    }
+
+    private IQueryable<DoItTask> QueryVisibleTasks(Guid userId)
+    {
+        return dbContext.Tasks
+            .Include(task => task.Zone)
+            .Include(task => task.Schedule)
+            .Include(task => task.Assignments)
+            .Where(task => task.CreatedByUserId == userId || task.Scope == TaskScope.House);
+    }
+
+    private async Task<TaskResponse> AddCurrentOccurrenceAsync(DoItTask task, DateTime now, CancellationToken cancellationToken)
+    {
+        var response = task.ToResponse();
+        if (task.Schedule is null)
+        {
+            return response;
+        }
+
+        var date = task.Schedule.RecurrenceType == RecurrenceType.Manual
+            ? task.Schedule.StartDate
+            : DateOnly.FromDateTime(TimeZoneInfo.ConvertTimeFromUtc(now, TimeZoneHelper.Find(task.Schedule.TimeZoneId)).Date);
+        var occurrence = await dbContext.TaskOccurrences
+            .Include(candidate => candidate.Completions)
+            .FirstOrDefaultAsync(candidate => candidate.TaskId == task.Id && candidate.Date == date, cancellationToken);
+        occurrence ??= await occurrenceService.GetOrCreateAsync(task, date, now, cancellationToken);
+        var completion = occurrence.Completions
+            .Where(candidate => candidate.RevertedAt is null)
+            .OrderByDescending(candidate => candidate.CreatedAt)
+            .FirstOrDefault();
+        return response with
+        {
+            OccurrenceDate = date,
+            OccurrenceStatus = occurrence.Status.ToString(),
+            OccurrenceCompletedAt = completion?.Action == TaskCompletionAction.Done ? completion.CreatedAt : null,
+            OccurrenceId = occurrence.Id,
+            OccurrenceCompletedByUserId = completion?.UserId
+        };
     }
 
     private async Task ValidateZoneAsync(Guid userId, Guid? zoneId, CancellationToken cancellationToken)

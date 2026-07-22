@@ -100,6 +100,10 @@ public sealed class NowService(DoItDbContext dbContext, IOccurrenceService occur
             .Where(completion => completion.RevertedAt is null && completion.Action == TaskCompletionAction.Done)
             .OrderByDescending(completion => completion.CreatedAt)
             .FirstOrDefault();
+        var activeCompletion = item.Occurrence.Completions
+            .Where(completion => completion.RevertedAt is null)
+            .OrderByDescending(completion => completion.CreatedAt)
+            .FirstOrDefault();
         DateTime? completedAt = completed is null ? null : DateTime.SpecifyKind(completed.CreatedAt, DateTimeKind.Utc);
         var completionTiming = completedAt is not null && DateOnly.FromDateTime(TimeZoneInfo.ConvertTimeFromUtc(completedAt.Value, TimeZoneHelper.Find(item.Occurrence.TimeZoneId ?? schedule?.TimeZoneId))).DayNumber < item.Occurrence.Date.DayNumber
             ? "Early"
@@ -119,6 +123,7 @@ public sealed class NowService(DoItDbContext dbContext, IOccurrenceService occur
             item.Occurrence.Date,
             completionTiming,
             completedAt,
+            activeCompletion?.UserId,
             schedule?.AvailableFromTime,
             schedule?.AvailableUntilTime,
             schedule?.RecommendedTime,
@@ -235,8 +240,8 @@ public sealed class NowService(DoItDbContext dbContext, IOccurrenceService occur
     {
         return scope switch
         {
-            "house" => task.Scope == TaskScope.House && CanSeeHouseTask(task, userId, isAdmin, includeAnyone: true),
-            "all" => task.Scope == TaskScope.Personal && task.CreatedByUserId == userId || task.Scope == TaskScope.House && CanSeeHouseTask(task, userId, isAdmin, includeAnyone: true),
+            "house" => task.Scope == TaskScope.House,
+            "all" => task.Scope == TaskScope.Personal && task.CreatedByUserId == userId || task.Scope == TaskScope.House,
             _ => task.Scope == TaskScope.Personal && task.CreatedByUserId == userId || task.Scope == TaskScope.House && CanSeeHouseTask(task, userId, isAdmin, includeAnyone: true)
         };
     }

@@ -33,8 +33,16 @@ public sealed class TaskActionService(DoItDbContext dbContext, IXpService xpServ
     public async Task<OccurrenceActionResponse> UndoAsync(Guid userId, Guid occurrenceId, CancellationToken cancellationToken)
     {
         var occurrence = await GetUserOccurrenceAsync(userId, occurrenceId, cancellationToken);
-        var completion = await dbContext.TaskCompletions
-            .Where(candidate => candidate.OccurrenceId == occurrenceId && candidate.UserId == userId && candidate.RevertedAt == null)
+        var isAdmin = await dbContext.Users.AnyAsync(user => user.Id == userId && user.Role == UserRole.Admin, cancellationToken);
+        var canUndoAnyHouseAction = isAdmin && occurrence.Task!.Scope == TaskScope.House;
+        var completionQuery = dbContext.TaskCompletions
+            .Where(candidate => candidate.OccurrenceId == occurrenceId && candidate.RevertedAt == null);
+        if (!canUndoAnyHouseAction)
+        {
+            completionQuery = completionQuery.Where(candidate => candidate.UserId == userId);
+        }
+
+        var completion = await completionQuery
             .OrderByDescending(candidate => candidate.CreatedAt)
             .FirstOrDefaultAsync(cancellationToken);
 
@@ -46,14 +54,7 @@ public sealed class TaskActionService(DoItDbContext dbContext, IXpService xpServ
         var now = DateTime.UtcNow;
         completion.RevertedAt = now;
         var userXp = await xpService.RevertCompletionAsync(completion, cancellationToken);
-        var hasRemainingDone = await dbContext.TaskCompletions.AnyAsync(candidate =>
-            candidate.OccurrenceId == occurrence.Id &&
-            candidate.UserId == userId &&
-            candidate.Id != completion.Id &&
-            candidate.Action == TaskCompletionAction.Done &&
-            candidate.RevertedAt == null,
-            cancellationToken);
-        occurrence.Status = hasRemainingDone ? OccurrenceStatus.Done : OccurrenceStatus.Pending;
+        occurrence.Status = await RecalculateStatusAsync(occurrence, completion.Id, cancellationToken);
         occurrence.UpdatedAt = now;
         if (occurrence.Task?.Schedule?.RecurrenceType == RecurrenceType.Manual)
         {
@@ -63,6 +64,39 @@ public sealed class TaskActionService(DoItDbContext dbContext, IXpService xpServ
         await dbContext.SaveChangesAsync(cancellationToken);
 
         return ToResponse(occurrence, 0, userXp);
+    }
+
+    private async Task<OccurrenceStatus> RecalculateStatusAsync(TaskOccurrence occurrence, Guid revertedCompletionId, CancellationToken cancellationToken)
+    {
+        var activeCompletions = await dbContext.TaskCompletions
+            .Where(completion => completion.OccurrenceId == occurrence.Id && completion.Id != revertedCompletionId && completion.RevertedAt == null)
+            .OrderBy(completion => completion.CreatedAt)
+            .ToListAsync(cancellationToken);
+        if (activeCompletions.Count == 0)
+        {
+            return OccurrenceStatus.Pending;
+        }
+
+        if (occurrence.Task?.AssignmentMode == AssignmentMode.AllAssignees)
+        {
+            var assigneeIds = occurrence.Task.Assignments.Select(assignment => assignment.UserId).Distinct().ToList();
+            var doneUserIds = activeCompletions
+                .Where(completion => completion.Action == TaskCompletionAction.Done)
+                .Select(completion => completion.UserId)
+                .Distinct()
+                .ToHashSet();
+            return assigneeIds.Count > 0 && assigneeIds.All(doneUserIds.Contains)
+                ? OccurrenceStatus.Done
+                : OccurrenceStatus.Pending;
+        }
+
+        var latest = activeCompletions[^1];
+        if (latest.Action == TaskCompletionAction.NotApplicable && activeCompletions.Any(completion => completion.Action == TaskCompletionAction.Done))
+        {
+            return OccurrenceStatus.Done;
+        }
+
+        return ToStatus(latest.Action);
     }
 
     private async Task<OccurrenceActionResponse> ApplyActionAsync(Guid userId, Guid occurrenceId, TaskCompletionAction action, bool allowEarly, CancellationToken cancellationToken)

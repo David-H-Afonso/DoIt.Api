@@ -15,6 +15,7 @@ public sealed record NowTaskResponse(
     DateOnly OccurrenceDate,
     string? CompletionTiming,
     DateTime? CompletedAt,
+    Guid? CompletedByUserId,
     TimeOnly? AvailableFromTime,
     TimeOnly? AvailableUntilTime,
     TimeOnly? RecommendedTime,
