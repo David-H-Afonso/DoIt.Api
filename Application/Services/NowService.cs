@@ -74,7 +74,7 @@ public sealed class NowService(DoItDbContext dbContext, IOccurrenceService occur
     {
         var itemList = items.ToList();
         var pending = itemList.Where(item => item.Occurrence.Status == OccurrenceStatus.Pending).ToList();
-        var overdue = SortTasks(itemList.Where(item => item.Status == "overdue" || IsWeeklyMissed(item)).Select(ToTaskResponse));
+        var overdue = SortTasks(itemList.Where(item => item.Occurrence.Status == OccurrenceStatus.Pending && item.Status == "overdue" || IsWeeklyMissed(item)).Select(ToTaskResponse));
         var available = SortTasks(pending.Where(item => item.Status == "available").Select(ToTaskResponse));
         var unavailable = Array.Empty<NowTaskResponse>();
         var completed = itemList.Where(item => item.Occurrence.Status != OccurrenceStatus.Pending && !IsWeeklyMissed(item)).Select(ToTaskResponse).ToList();
