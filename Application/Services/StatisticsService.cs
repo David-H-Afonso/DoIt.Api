@@ -51,7 +51,7 @@ public sealed class StatisticsService(DoItDbContext dbContext) : IStatisticsServ
                 .GroupBy(occurrence => occurrence.Date)
                 .ToDictionary(group => group.Key, group => group.OrderByDescending(occurrence => occurrence.UpdatedAt).First());
             var records = new List<StatisticsOccurrenceResponse>();
-            var expectedDates = GetExpectedDates(task, from, to);
+            var expectedDates = RecurrenceRules.GetExpectedDates(task.Schedule, from, to);
 
             foreach (var date in expectedDates)
             {
@@ -81,42 +81,6 @@ public sealed class StatisticsService(DoItDbContext dbContext) : IStatisticsServ
         var summary = BuildSummary(allRecords, null, null, from, to, today);
         var buckets = BuildBuckets(allRecords, normalizedGroupBy, from, to, today);
         return new StatisticsResponse(from, to, normalizedGroupBy, summary, buckets, taskResults);
-    }
-
-    private static IReadOnlyList<DateOnly> GetExpectedDates(DoItTask task, DateOnly from, DateOnly to)
-    {
-        var schedule = task.Schedule;
-        if (schedule is null || schedule.RecurrenceType == RecurrenceType.TimesPerWeek)
-        {
-            return [];
-        }
-
-        var dates = new List<DateOnly>();
-        for (var date = from; date <= to; date = date.AddDays(1))
-        {
-            if (date < schedule.StartDate || schedule.EndDate is not null && date > schedule.EndDate)
-            {
-                continue;
-            }
-
-            var applies = schedule.RecurrenceType switch
-            {
-                RecurrenceType.Manual => date == schedule.StartDate,
-                RecurrenceType.Daily => true,
-                RecurrenceType.Weekly => date.DayOfWeek == schedule.StartDate.DayOfWeek,
-                RecurrenceType.Weekday => schedule.Weekday == date.DayOfWeek,
-                RecurrenceType.EveryNDays => schedule.EveryNDays is > 0 && (date.DayNumber - schedule.StartDate.DayNumber) % schedule.EveryNDays.Value == 0,
-                RecurrenceType.MonthlyOrdinalWeekday => schedule.Weekday == date.DayOfWeek && ((date.Day - 1) / 7) + 1 == schedule.WeekOfMonth,
-                _ => false
-            };
-
-            if (applies)
-            {
-                dates.Add(date);
-            }
-        }
-
-        return dates;
     }
 
     private static StatisticsOccurrenceResponse ToRecord(DoItTask task, TaskOccurrence? occurrence, DateOnly scheduledDate, DateOnly today)
@@ -156,6 +120,7 @@ public sealed class StatisticsService(DoItDbContext dbContext) : IStatisticsServ
         {
             TaskCompletionAction.NotApplicable => "NotApplicable",
             TaskCompletionAction.Missed => "Missed",
+            _ when task.Schedule?.RecurrenceType == RecurrenceType.Manual && task.Schedule.AvailableUntilTime is null => "Pending",
             _ when scheduledDate < today => "Missed",
             _ => "Pending"
         };

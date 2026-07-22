@@ -13,6 +13,7 @@ public sealed class TaskScheduleConfiguration : IEntityTypeConfiguration<TaskSch
         builder.Property(schedule => schedule.RecurrenceType).HasConversion<string>().HasMaxLength(32);
         builder.Property(schedule => schedule.UnavailableVisibilityMode).HasConversion<string>().HasMaxLength(32);
         builder.Property(schedule => schedule.TimeZoneId).HasMaxLength(128).IsRequired();
+        builder.Property(schedule => schedule.Interval);
         builder.HasIndex(schedule => schedule.TaskId).IsUnique();
     }
 }

@@ -57,6 +57,7 @@ public static class TaskMapping
             schedule.WeekOfMonth,
             schedule.TimesPerWeek,
             schedule.EveryNDays,
+            schedule.Interval,
             schedule.AvailableFromTime,
             schedule.AvailableUntilTime,
             schedule.RecommendedTime,

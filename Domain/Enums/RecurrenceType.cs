@@ -8,5 +8,9 @@ public enum RecurrenceType
     Weekday = 3,
     TimesPerWeek = 4,
     EveryNDays = 5,
-    MonthlyOrdinalWeekday = 6
+    MonthlyOrdinalWeekday = 6,
+    EveryNWeeks = 7,
+    Monthly = 8,
+    EveryNMonths = 9,
+    EveryNYears = 10
 }

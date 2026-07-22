@@ -205,6 +205,7 @@ public sealed class BackupService(DoItDbContext dbContext, ILogger<BackupService
                     task.Schedule.WeekOfMonth,
                     task.Schedule.TimesPerWeek,
                     task.Schedule.EveryNDays,
+                    task.Schedule.Interval,
                     task.Schedule.AvailableFromTime,
                     task.Schedule.AvailableUntilTime,
                     task.Schedule.RecommendedTime,

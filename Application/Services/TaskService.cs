@@ -183,9 +183,13 @@ public sealed class TaskService(DoItDbContext dbContext, IOccurrenceService occu
             return response;
         }
 
-        var date = task.Schedule.RecurrenceType == RecurrenceType.Manual
-            ? task.Schedule.StartDate
-            : DateOnly.FromDateTime(TimeZoneInfo.ConvertTimeFromUtc(now, TimeZoneHelper.Find(task.Schedule.TimeZoneId)).Date);
+        var today = DateOnly.FromDateTime(TimeZoneInfo.ConvertTimeFromUtc(now, TimeZoneHelper.Find(task.Schedule.TimeZoneId)).Date);
+        if (!RecurrenceRules.AppliesOnDate(task.Schedule, today))
+        {
+            return response;
+        }
+
+        var date = task.Schedule.RecurrenceType == RecurrenceType.Manual ? task.Schedule.StartDate : today;
         var occurrence = await dbContext.TaskOccurrences
             .Include(candidate => candidate.Completions)
             .FirstOrDefaultAsync(candidate => candidate.TaskId == task.Id && candidate.Date == date, cancellationToken);
@@ -200,8 +204,25 @@ public sealed class TaskService(DoItDbContext dbContext, IOccurrenceService occu
             OccurrenceStatus = occurrence.Status.ToString(),
             OccurrenceCompletedAt = completion?.Action == TaskCompletionAction.Done ? completion.CreatedAt : null,
             OccurrenceId = occurrence.Id,
-            OccurrenceCompletedByUserId = completion?.UserId
+            OccurrenceCompletedByUserId = completion?.UserId,
+            IsOverdue = occurrence.Status == OccurrenceStatus.Pending && IsPastDeadline(task.Schedule, date, now)
         };
+    }
+
+    private static bool IsPastDeadline(TaskSchedule schedule, DateOnly occurrenceDate, DateTime now)
+    {
+        if (schedule.AvailableUntilTime is null)
+        {
+            return false;
+        }
+
+        var localDate = DateOnly.FromDateTime(TimeZoneInfo.ConvertTimeFromUtc(now, TimeZoneHelper.Find(schedule.TimeZoneId)).Date);
+        if (occurrenceDate < localDate)
+        {
+            return true;
+        }
+
+        return occurrenceDate == localDate && TimeOnly.FromDateTime(TimeZoneInfo.ConvertTimeFromUtc(now, TimeZoneHelper.Find(schedule.TimeZoneId))) > schedule.AvailableUntilTime;
     }
 
     private async Task ValidateZoneAsync(Guid userId, Guid? zoneId, CancellationToken cancellationToken)
@@ -235,13 +256,14 @@ public sealed class TaskService(DoItDbContext dbContext, IOccurrenceService occu
         var weekOfMonth = request?.WeekOfMonth;
         var timesPerWeek = request?.TimesPerWeek;
         var everyNDays = request?.EveryNDays;
+        var interval = request?.Interval;
         var availableFrom = request?.AvailableFromTime;
         var availableUntil = request?.AvailableUntilTime;
         var recommended = request?.RecommendedTime;
         var timeZoneId = TimeZoneHelper.Normalize(request?.TimeZoneId);
         var unavailableMode = ParseEnum(request?.UnavailableVisibilityMode, UnavailableVisibilityMode.Dimmed);
 
-        ValidateSchedule(recurrenceType, availableFrom, availableUntil, weekday, timesPerWeek, everyNDays, weekOfMonth);
+        ValidateSchedule(recurrenceType, availableFrom, availableUntil, weekday, timesPerWeek, everyNDays, weekOfMonth, interval);
 
         schedule.RecurrenceType = recurrenceType;
         schedule.StartDate = startDate;
@@ -250,6 +272,7 @@ public sealed class TaskService(DoItDbContext dbContext, IOccurrenceService occu
         schedule.WeekOfMonth = weekOfMonth;
         schedule.TimesPerWeek = timesPerWeek;
         schedule.EveryNDays = everyNDays;
+        schedule.Interval = interval;
         schedule.AvailableFromTime = availableFrom;
         schedule.AvailableUntilTime = availableUntil;
         schedule.RecommendedTime = recommended;
@@ -328,7 +351,7 @@ public sealed class TaskService(DoItDbContext dbContext, IOccurrenceService occu
         return ids;
     }
 
-    private static void ValidateSchedule(RecurrenceType recurrenceType, TimeOnly? availableFrom, TimeOnly? availableUntil, DayOfWeek? weekday, int? timesPerWeek, int? everyNDays, int? weekOfMonth)
+    private static void ValidateSchedule(RecurrenceType recurrenceType, TimeOnly? availableFrom, TimeOnly? availableUntil, DayOfWeek? weekday, int? timesPerWeek, int? everyNDays, int? weekOfMonth, int? interval)
     {
         if ((recurrenceType == RecurrenceType.Weekday || recurrenceType == RecurrenceType.MonthlyOrdinalWeekday) && weekday is null)
         {
@@ -348,6 +371,11 @@ public sealed class TaskService(DoItDbContext dbContext, IOccurrenceService occu
         if (recurrenceType == RecurrenceType.EveryNDays && (everyNDays is null or <= 0))
         {
             throw new ApiException(StatusCodes.Status400BadRequest, "every_n_days_required", "Every N days recurrence requires a positive value.");
+        }
+
+        if (recurrenceType is RecurrenceType.EveryNWeeks or RecurrenceType.EveryNMonths or RecurrenceType.EveryNYears && (interval is null or <= 0))
+        {
+            throw new ApiException(StatusCodes.Status400BadRequest, "interval_required", "This recurrence requires a positive interval.");
         }
 
         if (availableFrom is not null && availableUntil is not null && availableUntil <= availableFrom)

@@ -13,6 +13,7 @@ public sealed class TaskSchedule
     public int? WeekOfMonth { get; set; }
     public int? TimesPerWeek { get; set; }
     public int? EveryNDays { get; set; }
+    public int? Interval { get; set; }
     public TimeOnly? AvailableFromTime { get; set; }
     public TimeOnly? AvailableUntilTime { get; set; }
     public TimeOnly? RecommendedTime { get; set; }

@@ -53,7 +53,7 @@ public sealed class ReviewService(DoItDbContext dbContext, IOccurrenceService oc
             .Select(occurrence => ToItem(occurrence, xpByCompletion))
             .ToList();
         var created = new List<ReviewTaskResponse>();
-        foreach (var task in visibleTasks.Where(task => IsDate(task.CreatedAt, date)))
+        foreach (var task in visibleTasks.Where(task => IsDate(task.CreatedAt, date) && task.Schedule is not null && RecurrenceRules.AppliesOnDate(task.Schedule, date)))
         {
             var occurrence = visible.FirstOrDefault(candidate => candidate.TaskId == task.Id && candidate.Date == task.Schedule?.StartDate)
                 ?? await occurrenceService.GetOrCreateAsync(task, date, DateTime.UtcNow, cancellationToken);
@@ -119,6 +119,10 @@ public sealed class ReviewService(DoItDbContext dbContext, IOccurrenceService oc
     private static bool IsNotDoneForReview(TaskOccurrence occurrence, DateOnly date, DateOnly today)
     {
         var activeCompletion = ActiveCompletion(occurrence);
+        if (occurrence.Task?.Schedule?.RecurrenceType == RecurrenceType.Manual && occurrence.Task.Schedule.AvailableUntilTime is null)
+        {
+            return false;
+        }
         var isExplicitMiss = activeCompletion?.Action == TaskCompletionAction.Missed;
         if (occurrence.Task?.Schedule?.RecurrenceType == RecurrenceType.TimesPerWeek)
         {

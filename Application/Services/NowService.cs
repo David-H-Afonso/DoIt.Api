@@ -74,7 +74,7 @@ public sealed class NowService(DoItDbContext dbContext, IOccurrenceService occur
     {
         var itemList = items.ToList();
         var pending = itemList.Where(item => item.Occurrence.Status == OccurrenceStatus.Pending).ToList();
-        var overdue = SortTasks(itemList.Where(item => item.Occurrence.Status == OccurrenceStatus.Pending && item.Status == "overdue" || IsWeeklyMissed(item)).Select(ToTaskResponse));
+        var overdue = SortTasks(itemList.Where(item => item.Occurrence.Status == OccurrenceStatus.Pending && (item.Status == "overdue" || IsWeeklyMissed(item))).Select(ToTaskResponse));
         var available = SortTasks(pending.Where(item => item.Status == "available").Select(ToTaskResponse));
         var unavailable = Array.Empty<NowTaskResponse>();
         var completed = itemList.Where(item => item.Occurrence.Status != OccurrenceStatus.Pending && !IsWeeklyMissed(item)).Select(ToTaskResponse).ToList();
@@ -149,11 +149,6 @@ public sealed class NowService(DoItDbContext dbContext, IOccurrenceService occur
             return null;
         }
 
-        if (schedule.RecurrenceType == RecurrenceType.Manual && schedule.StartDate < date)
-        {
-            return new NowItem(task, null!, "overdue");
-        }
-
         if (schedule.AvailableFromTime is not null && currentTime < schedule.AvailableFromTime)
         {
             return schedule.UnavailableVisibilityMode == UnavailableVisibilityMode.Hidden ? null : new NowItem(task, null!, "unavailable");
@@ -169,22 +164,7 @@ public sealed class NowService(DoItDbContext dbContext, IOccurrenceService occur
 
     private static bool AppliesOnDate(DoItTask task, TaskSchedule schedule, DateOnly date)
     {
-        if (date < schedule.StartDate || schedule.EndDate is not null && date > schedule.EndDate)
-        {
-            return false;
-        }
-
-        return schedule.RecurrenceType switch
-        {
-            RecurrenceType.Manual => date >= schedule.StartDate,
-            RecurrenceType.Daily => true,
-            RecurrenceType.Weekly => date.DayOfWeek == schedule.StartDate.DayOfWeek,
-            RecurrenceType.Weekday => schedule.Weekday == date.DayOfWeek,
-            RecurrenceType.TimesPerWeek => true,
-            RecurrenceType.EveryNDays => schedule.EveryNDays is > 0 && (date.DayNumber - schedule.StartDate.DayNumber) % schedule.EveryNDays.Value == 0,
-            RecurrenceType.MonthlyOrdinalWeekday => schedule.Weekday == date.DayOfWeek && ((date.Day - 1) / 7) + 1 == schedule.WeekOfMonth,
-            _ => task.TaskType == TaskType.Routine
-        };
+        return schedule is not null && RecurrenceRules.AppliesOnDate(schedule, date);
     }
 
     private async Task<bool> WeeklyTargetReachedAsync(DoItTask task, DateOnly date, CancellationToken cancellationToken)

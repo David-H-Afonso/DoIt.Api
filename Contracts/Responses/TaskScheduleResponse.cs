@@ -9,6 +9,7 @@ public sealed record TaskScheduleResponse(
     int? WeekOfMonth,
     int? TimesPerWeek,
     int? EveryNDays,
+    int? Interval,
     TimeOnly? AvailableFromTime,
     TimeOnly? AvailableUntilTime,
     TimeOnly? RecommendedTime,
