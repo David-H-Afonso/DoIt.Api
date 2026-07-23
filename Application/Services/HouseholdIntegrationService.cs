@@ -29,6 +29,24 @@ public sealed class HouseholdIntegrationService(
         return await nowService.GetNowAsync(userId, date, "me", cancellationToken);
     }
 
+    public async Task<HouseholdOccurrenceActionResponse> CompleteOccurrenceAsync(
+        Guid userId,
+        Guid occurrenceId,
+        CancellationToken cancellationToken)
+    {
+        await EnsureIntegrationUserAsync(userId, cancellationToken);
+        return ToHouseholdActionResponse(await taskActionService.CompleteAsync(userId, occurrenceId, cancellationToken));
+    }
+
+    public async Task<HouseholdOccurrenceActionResponse> UndoOccurrenceAsync(
+        Guid userId,
+        Guid occurrenceId,
+        CancellationToken cancellationToken)
+    {
+        await EnsureIntegrationUserAsync(userId, cancellationToken);
+        return ToHouseholdActionResponse(await taskActionService.UndoAsync(userId, occurrenceId, cancellationToken));
+    }
+
     public async Task<OccurrenceActionResponse> CompleteTaskAsync(Guid userId, Guid taskId, CancellationToken cancellationToken)
     {
         var occurrence = await GetCurrentHouseholdOccurrenceAsync(userId, taskId, allowArchived: true, cancellationToken);
@@ -99,4 +117,7 @@ public sealed class HouseholdIntegrationService(
             throw new ApiException(StatusCodes.Status403Forbidden, "integration_user_unavailable", "Household integration user is unavailable.");
         }
     }
+
+    private static HouseholdOccurrenceActionResponse ToHouseholdActionResponse(OccurrenceActionResponse response) =>
+        new(response.OccurrenceId, response.TaskId, response.Date, response.Status);
 }

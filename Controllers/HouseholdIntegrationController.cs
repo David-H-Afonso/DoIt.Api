@@ -28,6 +28,26 @@ public sealed class HouseholdIntegrationController(IHouseholdIntegrationService 
         return Ok(await integrationService.GetNowAsync(GetIntegrationUserId(), date, cancellationToken));
     }
 
+    [HttpPost("v1/occurrences/{occurrenceId:guid}/complete")]
+    [Authorize(Policy = HouseholdIntegrationPolicies.TasksComplete)]
+    [ProducesResponseType<HouseholdOccurrenceActionResponse>(StatusCodes.Status200OK)]
+    public async Task<ActionResult<HouseholdOccurrenceActionResponse>> CompleteOccurrence(
+        Guid occurrenceId,
+        CancellationToken cancellationToken)
+    {
+        return Ok(await integrationService.CompleteOccurrenceAsync(GetIntegrationUserId(), occurrenceId, cancellationToken));
+    }
+
+    [HttpPost("v1/occurrences/{occurrenceId:guid}/undo")]
+    [Authorize(Policy = HouseholdIntegrationPolicies.TasksUndo)]
+    [ProducesResponseType<HouseholdOccurrenceActionResponse>(StatusCodes.Status200OK)]
+    public async Task<ActionResult<HouseholdOccurrenceActionResponse>> UndoOccurrence(
+        Guid occurrenceId,
+        CancellationToken cancellationToken)
+    {
+        return Ok(await integrationService.UndoOccurrenceAsync(GetIntegrationUserId(), occurrenceId, cancellationToken));
+    }
+
     [HttpPost("tasks/{taskId:guid}/complete")]
     [Authorize(Policy = HouseholdIntegrationPolicies.TasksComplete)]
     [ProducesResponseType<OccurrenceActionResponse>(StatusCodes.Status200OK)]

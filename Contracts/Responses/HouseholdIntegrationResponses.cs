@@ -18,3 +18,9 @@ public sealed record HouseholdMeResponse(
     Guid ConnectionId,
     HouseholdIntegrationAccountResponse Account,
     IReadOnlyCollection<string> Scopes);
+
+public sealed record HouseholdOccurrenceActionResponse(
+    Guid OccurrenceId,
+    Guid TaskId,
+    DateOnly OccurrenceDate,
+    string OccurrenceStatus);
