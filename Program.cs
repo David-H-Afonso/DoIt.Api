@@ -8,6 +8,7 @@ builder.Services.AddDoItConfiguration(builder.Configuration);
 builder.Services.AddDoItPersistence(builder.Configuration);
 builder.Services.AddDoItAuth(builder.Configuration);
 builder.Services.AddDoItCors(builder.Configuration);
+builder.Services.AddDoItRateLimiting();
 builder.Services.AddControllers();
 builder.Services.AddOpenApi();
 
@@ -21,6 +22,7 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseCors();
+app.UseRateLimiter();
 app.UseAuthentication();
 app.UseAuthorization();
 

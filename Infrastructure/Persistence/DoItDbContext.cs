@@ -19,6 +19,10 @@ public sealed class DoItDbContext(DbContextOptions<DoItDbContext> options) : DbC
     public DbSet<BackupSchedule> BackupSchedules => Set<BackupSchedule>();
     public DbSet<CalendarEvent> CalendarEvents => Set<CalendarEvent>();
     public DbSet<CalendarEventReminder> CalendarEventReminders => Set<CalendarEventReminder>();
+    public DbSet<HouseholdConnection> HouseholdConnections => Set<HouseholdConnection>();
+    public DbSet<HouseholdAuthorizationCode> HouseholdAuthorizationCodes => Set<HouseholdAuthorizationCode>();
+    public DbSet<HouseholdRefreshToken> HouseholdRefreshTokens => Set<HouseholdRefreshToken>();
+    public DbSet<HouseholdAccessToken> HouseholdAccessTokens => Set<HouseholdAccessToken>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

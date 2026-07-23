@@ -24,5 +24,9 @@ public sealed class UserConfiguration : IEntityTypeConfiguration<User>
             .WithOne(schedule => schedule.User)
             .HasForeignKey(schedule => schedule.UserId)
             .OnDelete(DeleteBehavior.Cascade);
+        builder.HasMany(user => user.HouseholdConnections)
+            .WithOne(connection => connection.User)
+            .HasForeignKey(connection => connection.UserId)
+            .OnDelete(DeleteBehavior.Cascade);
     }
 }

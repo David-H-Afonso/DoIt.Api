@@ -17,4 +17,5 @@ public sealed class User
 
     public ICollection<RefreshToken> RefreshTokens { get; set; } = new List<RefreshToken>();
     public ICollection<BackupSchedule> BackupSchedules { get; set; } = new List<BackupSchedule>();
+    public ICollection<HouseholdConnection> HouseholdConnections { get; set; } = new List<HouseholdConnection>();
 }

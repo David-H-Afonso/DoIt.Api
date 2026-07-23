@@ -221,6 +221,7 @@ public sealed class NowService(DoItDbContext dbContext, IOccurrenceService occur
         return scope switch
         {
             "house" => task.Scope == TaskScope.House,
+            "house-assigned" => task.Scope == TaskScope.House && CanSeeHouseTask(task, userId, isAdmin: false, includeAnyone: true),
             "all" => task.Scope == TaskScope.Personal && task.CreatedByUserId == userId || task.Scope == TaskScope.House,
             _ => task.Scope == TaskScope.Personal && task.CreatedByUserId == userId || task.Scope == TaskScope.House && CanSeeHouseTask(task, userId, isAdmin, includeAnyone: true)
         };
@@ -238,7 +239,9 @@ public sealed class NowService(DoItDbContext dbContext, IOccurrenceService occur
 
     private static string NormalizeScope(string? scope)
     {
-        return string.Equals(scope, "house", StringComparison.OrdinalIgnoreCase)
+        return string.Equals(scope, "house-assigned", StringComparison.OrdinalIgnoreCase)
+            ? "house-assigned"
+            : string.Equals(scope, "house", StringComparison.OrdinalIgnoreCase)
             ? "house"
             : string.Equals(scope, "all", StringComparison.OrdinalIgnoreCase)
                 ? "all"
