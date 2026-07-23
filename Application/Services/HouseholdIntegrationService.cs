@@ -23,6 +23,12 @@ public sealed class HouseholdIntegrationService(
         return response with { Scope = "house" };
     }
 
+    public async Task<NowResponse> GetNowAsync(Guid userId, DateOnly? date, CancellationToken cancellationToken)
+    {
+        await EnsureIntegrationUserAsync(userId, cancellationToken);
+        return await nowService.GetNowAsync(userId, date, "me", cancellationToken);
+    }
+
     public async Task<OccurrenceActionResponse> CompleteTaskAsync(Guid userId, Guid taskId, CancellationToken cancellationToken)
     {
         var occurrence = await GetCurrentHouseholdOccurrenceAsync(userId, taskId, allowArchived: true, cancellationToken);

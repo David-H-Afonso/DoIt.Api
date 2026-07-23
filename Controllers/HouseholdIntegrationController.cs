@@ -20,6 +20,14 @@ public sealed class HouseholdIntegrationController(IHouseholdIntegrationService 
         return Ok(await integrationService.GetSummaryAsync(GetIntegrationUserId(), date, cancellationToken));
     }
 
+    [HttpGet("v1/now")]
+    [Authorize(Policy = HouseholdIntegrationPolicies.TasksRead)]
+    [ProducesResponseType<NowResponse>(StatusCodes.Status200OK)]
+    public async Task<ActionResult<NowResponse>> Now([FromQuery] DateOnly? date, CancellationToken cancellationToken)
+    {
+        return Ok(await integrationService.GetNowAsync(GetIntegrationUserId(), date, cancellationToken));
+    }
+
     [HttpPost("tasks/{taskId:guid}/complete")]
     [Authorize(Policy = HouseholdIntegrationPolicies.TasksComplete)]
     [ProducesResponseType<OccurrenceActionResponse>(StatusCodes.Status200OK)]
