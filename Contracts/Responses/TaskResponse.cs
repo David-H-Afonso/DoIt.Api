@@ -23,4 +23,5 @@ public sealed record TaskResponse(
     DateTime? OccurrenceCompletedAt,
     Guid? OccurrenceId,
     Guid? OccurrenceCompletedByUserId = null,
-    bool IsOverdue = false);
+    bool IsOverdue = false,
+    TaskOccurrenceSummaryResponse? UpcomingOccurrence = null);

@@ -112,9 +112,13 @@ public sealed class TaskActionService(DoItDbContext dbContext, IXpService xpServ
         }
 
 
-        if (action == TaskCompletionAction.Done && !allowEarly && occurrence.AvailableFromAt is not null && DateTime.UtcNow < occurrence.AvailableFromAt)
+        if (action == TaskCompletionAction.Done && !allowEarly)
         {
-            throw new ApiException(StatusCodes.Status409Conflict, "occurrence_unavailable", "Occurrence is not available yet.");
+            var localToday = DateOnly.FromDateTime(TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, TimeZoneHelper.Find(occurrence.TimeZoneId ?? occurrence.Task?.Schedule?.TimeZoneId)).Date);
+            if (occurrence.Date > localToday || occurrence.AvailableFromAt is not null && DateTime.UtcNow < occurrence.AvailableFromAt)
+            {
+                throw new ApiException(StatusCodes.Status409Conflict, "occurrence_unavailable", "Occurrence is not available yet.");
+            }
         }
 
         if (action == TaskCompletionAction.Done && occurrence.Task?.AssignmentMode == AssignmentMode.AllAssignees)

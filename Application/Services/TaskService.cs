@@ -184,29 +184,51 @@ public sealed class TaskService(DoItDbContext dbContext, IOccurrenceService occu
         }
 
         var today = DateOnly.FromDateTime(TimeZoneInfo.ConvertTimeFromUtc(now, TimeZoneHelper.Find(task.Schedule.TimeZoneId)).Date);
-        if (!RecurrenceRules.AppliesOnDate(task.Schedule, today))
+        if (RecurrenceRules.AppliesOnDate(task.Schedule, today))
         {
-            return response;
+            var date = task.Schedule.RecurrenceType == RecurrenceType.Manual ? task.Schedule.StartDate : today;
+            var occurrence = await dbContext.TaskOccurrences
+                .Include(candidate => candidate.Completions)
+                .FirstOrDefaultAsync(candidate => candidate.TaskId == task.Id && candidate.Date == date, cancellationToken);
+            occurrence ??= await occurrenceService.GetOrCreateAsync(task, date, now, cancellationToken);
+            var completion = occurrence.Completions
+                .Where(candidate => candidate.RevertedAt is null)
+                .OrderByDescending(candidate => candidate.CreatedAt)
+                .FirstOrDefault();
+            response = response with
+            {
+                OccurrenceDate = date,
+                OccurrenceStatus = occurrence.Status.ToString(),
+                OccurrenceCompletedAt = completion?.Action == TaskCompletionAction.Done ? completion.CreatedAt : null,
+                OccurrenceId = occurrence.Id,
+                OccurrenceCompletedByUserId = completion?.UserId,
+                IsOverdue = occurrence.Status == OccurrenceStatus.Pending && IsPastDeadline(task.Schedule, date, now)
+            };
         }
 
-        var date = task.Schedule.RecurrenceType == RecurrenceType.Manual ? task.Schedule.StartDate : today;
-        var occurrence = await dbContext.TaskOccurrences
-            .Include(candidate => candidate.Completions)
-            .FirstOrDefaultAsync(candidate => candidate.TaskId == task.Id && candidate.Date == date, cancellationToken);
-        occurrence ??= await occurrenceService.GetOrCreateAsync(task, date, now, cancellationToken);
+        if (!task.IsArchived)
+        {
+            var upcomingDate = RecurrenceRules.GetNextOccurrenceDate(task.Schedule, today);
+            if (upcomingDate is not null)
+            {
+                var upcomingOccurrence = await dbContext.TaskOccurrences
+                    .Include(candidate => candidate.Completions)
+                    .FirstOrDefaultAsync(candidate => candidate.TaskId == task.Id && candidate.Date == upcomingDate, cancellationToken);
+                upcomingOccurrence ??= await occurrenceService.GetOrCreateAsync(task, upcomingDate.Value, now, cancellationToken);
+                response = response with { UpcomingOccurrence = ToOccurrenceSummary(upcomingOccurrence) };
+            }
+        }
+
+        return response;
+    }
+
+    private static TaskOccurrenceSummaryResponse ToOccurrenceSummary(TaskOccurrence occurrence)
+    {
         var completion = occurrence.Completions
-            .Where(candidate => candidate.RevertedAt is null)
+            .Where(candidate => candidate.RevertedAt is null && candidate.Action == TaskCompletionAction.Done)
             .OrderByDescending(candidate => candidate.CreatedAt)
             .FirstOrDefault();
-        return response with
-        {
-            OccurrenceDate = date,
-            OccurrenceStatus = occurrence.Status.ToString(),
-            OccurrenceCompletedAt = completion?.Action == TaskCompletionAction.Done ? completion.CreatedAt : null,
-            OccurrenceId = occurrence.Id,
-            OccurrenceCompletedByUserId = completion?.UserId,
-            IsOverdue = occurrence.Status == OccurrenceStatus.Pending && IsPastDeadline(task.Schedule, date, now)
-        };
+        return new TaskOccurrenceSummaryResponse(occurrence.Id, occurrence.Date, occurrence.Status.ToString(), completion?.CreatedAt, completion?.UserId);
     }
 
     private static bool IsPastDeadline(TaskSchedule schedule, DateOnly occurrenceDate, DateTime now)
