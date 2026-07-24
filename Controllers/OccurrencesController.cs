@@ -15,7 +15,7 @@ public sealed class OccurrencesController(ITaskActionService taskActionService) 
     [ProducesResponseType<OccurrenceActionResponse>(StatusCodes.Status200OK)]
     public async Task<ActionResult<OccurrenceActionResponse>> Complete(Guid id, CancellationToken cancellationToken)
     {
-        return Ok(await taskActionService.CompleteAsync(GetUserId(), id, cancellationToken));
+        return Ok(await taskActionService.CompleteAsync(GetUserId(), id, allowAdminOverride: true, cancellationToken));
     }
 
     [HttpPost("{id:guid}/complete-early")]
@@ -43,7 +43,7 @@ public sealed class OccurrencesController(ITaskActionService taskActionService) 
     [ProducesResponseType<OccurrenceActionResponse>(StatusCodes.Status200OK)]
     public async Task<ActionResult<OccurrenceActionResponse>> Undo(Guid id, CancellationToken cancellationToken)
     {
-        return Ok(await taskActionService.UndoAsync(GetUserId(), id, cancellationToken));
+        return Ok(await taskActionService.UndoAsync(GetUserId(), id, allowAdminOverride: true, cancellationToken));
     }
 
     private Guid GetUserId()

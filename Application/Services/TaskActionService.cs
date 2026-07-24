@@ -10,30 +10,30 @@ namespace DoIt.Api.Application.Services;
 
 public sealed class TaskActionService(DoItDbContext dbContext, IXpService xpService) : ITaskActionService
 {
-    public Task<OccurrenceActionResponse> CompleteAsync(Guid userId, Guid occurrenceId, CancellationToken cancellationToken)
+    public Task<OccurrenceActionResponse> CompleteAsync(Guid userId, Guid occurrenceId, bool allowAdminOverride, CancellationToken cancellationToken)
     {
-        return ApplyActionAsync(userId, occurrenceId, TaskCompletionAction.Done, allowEarly: false, cancellationToken);
+        return ApplyActionAsync(userId, occurrenceId, TaskCompletionAction.Done, allowEarly: false, allowAdminOverride, cancellationToken);
     }
 
     public Task<OccurrenceActionResponse> CompleteEarlyAsync(Guid userId, Guid occurrenceId, CancellationToken cancellationToken)
     {
-        return ApplyActionAsync(userId, occurrenceId, TaskCompletionAction.Done, allowEarly: true, cancellationToken);
+        return ApplyActionAsync(userId, occurrenceId, TaskCompletionAction.Done, allowEarly: true, allowAdminOverride: true, cancellationToken);
     }
 
     public Task<OccurrenceActionResponse> MissAsync(Guid userId, Guid occurrenceId, CancellationToken cancellationToken)
     {
-        return ApplyActionAsync(userId, occurrenceId, TaskCompletionAction.Missed, allowEarly: false, cancellationToken);
+        return ApplyActionAsync(userId, occurrenceId, TaskCompletionAction.Missed, allowEarly: false, allowAdminOverride: true, cancellationToken);
     }
 
     public Task<OccurrenceActionResponse> NotApplicableAsync(Guid userId, Guid occurrenceId, CancellationToken cancellationToken)
     {
-        return ApplyActionAsync(userId, occurrenceId, TaskCompletionAction.NotApplicable, allowEarly: false, cancellationToken);
+        return ApplyActionAsync(userId, occurrenceId, TaskCompletionAction.NotApplicable, allowEarly: false, allowAdminOverride: true, cancellationToken);
     }
 
-    public async Task<OccurrenceActionResponse> UndoAsync(Guid userId, Guid occurrenceId, CancellationToken cancellationToken)
+    public async Task<OccurrenceActionResponse> UndoAsync(Guid userId, Guid occurrenceId, bool allowAdminOverride, CancellationToken cancellationToken)
     {
-        var occurrence = await GetUserOccurrenceAsync(userId, occurrenceId, cancellationToken);
-        var isAdmin = await dbContext.Users.AnyAsync(user => user.Id == userId && user.Role == UserRole.Admin, cancellationToken);
+        var occurrence = await GetUserOccurrenceAsync(userId, occurrenceId, allowAdminOverride, cancellationToken);
+        var isAdmin = allowAdminOverride && await dbContext.Users.AnyAsync(user => user.Id == userId && user.Role == UserRole.Admin, cancellationToken);
         var canUndoAnyHouseAction = isAdmin && occurrence.Task!.Scope == TaskScope.House;
         var completionQuery = dbContext.TaskCompletions
             .Where(candidate => candidate.OccurrenceId == occurrenceId && candidate.RevertedAt == null);
@@ -99,9 +99,15 @@ public sealed class TaskActionService(DoItDbContext dbContext, IXpService xpServ
         return ToStatus(latest.Action);
     }
 
-    private async Task<OccurrenceActionResponse> ApplyActionAsync(Guid userId, Guid occurrenceId, TaskCompletionAction action, bool allowEarly, CancellationToken cancellationToken)
+    private async Task<OccurrenceActionResponse> ApplyActionAsync(
+        Guid userId,
+        Guid occurrenceId,
+        TaskCompletionAction action,
+        bool allowEarly,
+        bool allowAdminOverride,
+        CancellationToken cancellationToken)
     {
-        var occurrence = await GetUserOccurrenceAsync(userId, occurrenceId, cancellationToken);
+        var occurrence = await GetUserOccurrenceAsync(userId, occurrenceId, allowAdminOverride, cancellationToken);
         if (action == TaskCompletionAction.Done && allowEarly)
         {
             var localToday = DateOnly.FromDateTime(TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, TimeZoneHelper.Find(occurrence.TimeZoneId ?? occurrence.Task?.Schedule?.TimeZoneId)).Date);
@@ -206,7 +212,7 @@ public sealed class TaskActionService(DoItDbContext dbContext, IXpService xpServ
         return ToResponse(occurrence);
     }
 
-    private async Task<TaskOccurrence> GetUserOccurrenceAsync(Guid userId, Guid occurrenceId, CancellationToken cancellationToken)
+    private async Task<TaskOccurrence> GetUserOccurrenceAsync(Guid userId, Guid occurrenceId, bool allowAdminOverride, CancellationToken cancellationToken)
     {
         var occurrence = await dbContext.TaskOccurrences
             .Include(candidate => candidate.Task)
@@ -220,7 +226,7 @@ public sealed class TaskActionService(DoItDbContext dbContext, IXpService xpServ
             throw new ApiException(StatusCodes.Status404NotFound, "occurrence_not_found", "Occurrence not found.");
         }
 
-        var isAdmin = await dbContext.Users.AnyAsync(user => user.Id == userId && user.Role == UserRole.Admin, cancellationToken);
+        var isAdmin = allowAdminOverride && await dbContext.Users.AnyAsync(user => user.Id == userId && user.Role == UserRole.Admin, cancellationToken);
         if (!CanActOnTask(occurrence.Task, userId, isAdmin))
         {
             throw new ApiException(StatusCodes.Status404NotFound, "occurrence_not_found", "Occurrence not found.");

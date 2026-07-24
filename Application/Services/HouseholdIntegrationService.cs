@@ -14,19 +14,32 @@ public sealed class HouseholdIntegrationService(
     INowService nowService,
     ITaskService taskService,
     ITaskActionService taskActionService,
-    IOccurrenceService occurrenceService) : IHouseholdIntegrationService
+    IOccurrenceService occurrenceService,
+    TimeProvider timeProvider) : IHouseholdIntegrationService
 {
     public async Task<NowResponse> GetSummaryAsync(Guid userId, DateOnly? date, CancellationToken cancellationToken)
     {
         await EnsureIntegrationUserAsync(userId, cancellationToken);
-        var response = await nowService.GetNowAsync(userId, date, "house-assigned", cancellationToken);
+        var response = await nowService.GetNowAsync(userId, date, "house-assigned", allowAdminOverride: false, cancellationToken);
         return response with { Scope = "house" };
     }
 
-    public async Task<NowResponse> GetNowAsync(Guid userId, DateOnly? date, CancellationToken cancellationToken)
+    public async Task<NowResponse> GetNowAsync(
+        Guid userId,
+        DateOnly? date,
+        string? timeZoneId,
+        CancellationToken cancellationToken)
     {
         await EnsureIntegrationUserAsync(userId, cancellationToken);
-        return await nowService.GetNowAsync(userId, date, "me", cancellationToken);
+        if (!TimeZoneHelper.IsValid(timeZoneId))
+        {
+            throw new ApiException(StatusCodes.Status400BadRequest, "invalid_time_zone", "Time zone is invalid.");
+        }
+
+        var targetDate = date ?? DateOnly.FromDateTime(TimeZoneInfo.ConvertTimeFromUtc(
+            timeProvider.GetUtcNow().UtcDateTime,
+            TimeZoneHelper.Find(timeZoneId)));
+        return await nowService.GetNowAsync(userId, targetDate, "me", allowAdminOverride: false, cancellationToken);
     }
 
     public async Task<HouseholdOccurrenceActionResponse> CompleteOccurrenceAsync(
@@ -35,7 +48,7 @@ public sealed class HouseholdIntegrationService(
         CancellationToken cancellationToken)
     {
         await EnsureIntegrationUserAsync(userId, cancellationToken);
-        return ToHouseholdActionResponse(await taskActionService.CompleteAsync(userId, occurrenceId, cancellationToken));
+        return ToHouseholdActionResponse(await taskActionService.CompleteAsync(userId, occurrenceId, allowAdminOverride: false, cancellationToken));
     }
 
     public async Task<HouseholdOccurrenceActionResponse> UndoOccurrenceAsync(
@@ -44,7 +57,7 @@ public sealed class HouseholdIntegrationService(
         CancellationToken cancellationToken)
     {
         await EnsureIntegrationUserAsync(userId, cancellationToken);
-        return ToHouseholdActionResponse(await taskActionService.UndoAsync(userId, occurrenceId, cancellationToken));
+        return ToHouseholdActionResponse(await taskActionService.UndoAsync(userId, occurrenceId, allowAdminOverride: false, cancellationToken));
     }
 
     public async Task<OccurrenceActionResponse> CompleteTaskAsync(Guid userId, Guid taskId, CancellationToken cancellationToken)
@@ -55,13 +68,13 @@ public sealed class HouseholdIntegrationService(
             throw new ApiException(StatusCodes.Status404NotFound, "task_not_found", "Task not found.");
         }
 
-        return await taskActionService.CompleteAsync(userId, occurrence.Id, cancellationToken);
+        return await taskActionService.CompleteAsync(userId, occurrence.Id, allowAdminOverride: false, cancellationToken);
     }
 
     public async Task<OccurrenceActionResponse> UndoTaskAsync(Guid userId, Guid taskId, CancellationToken cancellationToken)
     {
         var occurrence = await GetCurrentHouseholdOccurrenceAsync(userId, taskId, allowArchived: true, cancellationToken);
-        return await taskActionService.UndoAsync(userId, occurrence.Id, cancellationToken);
+        return await taskActionService.UndoAsync(userId, occurrence.Id, allowAdminOverride: false, cancellationToken);
     }
 
     public async Task<TaskResponse> CreateTaskAsync(Guid userId, HouseholdCreateTaskRequest request, CancellationToken cancellationToken)

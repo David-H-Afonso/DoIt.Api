@@ -4,5 +4,5 @@ namespace DoIt.Api.Application.Interfaces;
 
 public interface INowService
 {
-    Task<NowResponse> GetNowAsync(Guid userId, DateOnly? date, string? scope, CancellationToken cancellationToken);
+    Task<NowResponse> GetNowAsync(Guid userId, DateOnly? date, string? scope, bool allowAdminOverride, CancellationToken cancellationToken);
 }

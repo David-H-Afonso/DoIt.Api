@@ -12,11 +12,11 @@ public sealed class NowService(DoItDbContext dbContext, IOccurrenceService occur
 {
     private const string GeneralZoneName = "General";
 
-    public async Task<NowResponse> GetNowAsync(Guid userId, DateOnly? date, string? scope, CancellationToken cancellationToken)
+    public async Task<NowResponse> GetNowAsync(Guid userId, DateOnly? date, string? scope, bool allowAdminOverride, CancellationToken cancellationToken)
     {
         var targetDate = date ?? DateOnly.FromDateTime(DateTime.UtcNow);
         var normalizedScope = NormalizeScope(scope);
-            var user = await dbContext.Users.FirstAsync(candidate => candidate.Id == userId, cancellationToken);
+        var user = await dbContext.Users.FirstAsync(candidate => candidate.Id == userId, cancellationToken);
 
         var tasks = await dbContext.Tasks
             .Include(task => task.Zone)
@@ -29,7 +29,7 @@ public sealed class NowService(DoItDbContext dbContext, IOccurrenceService occur
             .ThenBy(task => task.Title)
             .ToListAsync(cancellationToken);
 
-        var visibleTasks = tasks.Where(task => MatchesScope(task, normalizedScope, userId, user.Role == UserRole.Admin)).ToList();
+        var visibleTasks = tasks.Where(task => MatchesScope(task, normalizedScope, userId, allowAdminOverride && user.Role == UserRole.Admin)).ToList();
         var visibleItems = new List<NowItem>();
         var now = DateTime.UtcNow;
         foreach (var task in visibleTasks)
@@ -127,7 +127,7 @@ public sealed class NowService(DoItDbContext dbContext, IOccurrenceService occur
             schedule?.AvailableFromTime,
             schedule?.AvailableUntilTime,
             schedule?.RecommendedTime,
-            schedule?.TimeZoneId ?? "UTC",
+            item.Occurrence.TimeZoneId ?? schedule?.TimeZoneId ?? "UTC",
             schedule?.RecurrenceType.ToString() ?? RecurrenceType.Manual.ToString());
     }
 
@@ -198,12 +198,13 @@ public sealed class NowService(DoItDbContext dbContext, IOccurrenceService occur
 
     private static TimeOnly GetCurrentTime(string? timeZoneId, DateOnly targetDate)
     {
-        if (targetDate != DateOnly.FromDateTime(DateTime.UtcNow))
+        var localNow = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, TimeZoneHelper.Find(timeZoneId));
+        if (targetDate != DateOnly.FromDateTime(localNow))
         {
             return new TimeOnly(12, 0);
         }
 
-        return TimeOnly.FromDateTime(TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, TimeZoneHelper.Find(timeZoneId)));
+        return TimeOnly.FromDateTime(localNow);
     }
 
     private async Task<bool> UserAlreadyCompletedAsync(Guid userId, Guid occurrenceId, CancellationToken cancellationToken)

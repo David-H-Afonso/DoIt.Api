@@ -23,9 +23,12 @@ public sealed class HouseholdIntegrationController(IHouseholdIntegrationService 
     [HttpGet("v1/now")]
     [Authorize(Policy = HouseholdIntegrationPolicies.TasksRead)]
     [ProducesResponseType<NowResponse>(StatusCodes.Status200OK)]
-    public async Task<ActionResult<NowResponse>> Now([FromQuery] DateOnly? date, CancellationToken cancellationToken)
+    public async Task<ActionResult<NowResponse>> Now(
+        [FromQuery] DateOnly? date,
+        [FromQuery] string? timeZoneId,
+        CancellationToken cancellationToken)
     {
-        return Ok(await integrationService.GetNowAsync(GetIntegrationUserId(), date, cancellationToken));
+        return Ok(await integrationService.GetNowAsync(GetIntegrationUserId(), date, timeZoneId, cancellationToken));
     }
 
     [HttpPost("v1/occurrences/{occurrenceId:guid}/complete")]

@@ -2,6 +2,29 @@ namespace DoIt.Api.Common;
 
 public static class TimeZoneHelper
 {
+    public static bool IsValid(string? timeZoneId)
+    {
+        if (string.IsNullOrWhiteSpace(timeZoneId))
+        {
+            return true;
+        }
+
+        var candidate = timeZoneId.Trim();
+        try
+        {
+            _ = TimeZoneInfo.FindSystemTimeZoneById(candidate);
+            return true;
+        }
+        catch (TimeZoneNotFoundException)
+        {
+            return HasConvertibleId(candidate);
+        }
+        catch (InvalidTimeZoneException)
+        {
+            return HasConvertibleId(candidate);
+        }
+    }
+
     public static string Normalize(string? timeZoneId)
     {
         if (string.IsNullOrWhiteSpace(timeZoneId))

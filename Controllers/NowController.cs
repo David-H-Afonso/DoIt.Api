@@ -15,7 +15,7 @@ public sealed class NowController(INowService nowService) : ControllerBase
     [ProducesResponseType<NowResponse>(StatusCodes.Status200OK)]
     public async Task<ActionResult<NowResponse>> Get([FromQuery] DateOnly? date, [FromQuery] string? scope, CancellationToken cancellationToken)
     {
-        return Ok(await nowService.GetNowAsync(GetUserId(), date, scope, cancellationToken));
+        return Ok(await nowService.GetNowAsync(GetUserId(), date, scope, allowAdminOverride: true, cancellationToken));
     }
 
     private Guid GetUserId()

@@ -107,6 +107,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IHouseholdConnectionService, HouseholdConnectionService>();
         services.AddScoped<HouseholdIntegrationAuthenticationEvents>();
         services.AddScoped<HouseholdIntegrationTokenCodec>();
+        services.AddSingleton(TimeProvider.System);
         services.AddSingleton<IJwtTokenService, JwtTokenService>();
         services.AddSingleton<IPasswordHasher, Pbkdf2PasswordHasher>();
 
