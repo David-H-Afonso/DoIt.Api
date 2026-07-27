@@ -89,6 +89,7 @@ public static class ServiceCollectionExtensions
             AddHouseholdPolicy(options, HouseholdIntegrationPolicies.TasksComplete, HouseholdIntegrationScopes.TasksComplete);
             AddHouseholdPolicy(options, HouseholdIntegrationPolicies.TasksUndo, HouseholdIntegrationScopes.TasksUndo);
             AddHouseholdPolicy(options, HouseholdIntegrationPolicies.TasksCreate, HouseholdIntegrationScopes.TasksCreate);
+            AddHouseholdPolicy(options, HouseholdIntegrationPolicies.CalendarRead, HouseholdIntegrationScopes.CalendarRead);
         });
         services.AddScoped<IAuthService, AuthService>();
         services.AddScoped<INowService, NowService>();

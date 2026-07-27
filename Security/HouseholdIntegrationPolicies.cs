@@ -8,4 +8,5 @@ public static class HouseholdIntegrationPolicies
     public const string TasksComplete = "HouseholdIntegrationTasksComplete";
     public const string TasksUndo = "HouseholdIntegrationTasksUndo";
     public const string TasksCreate = "HouseholdIntegrationTasksCreate";
+    public const string CalendarRead = "HouseholdIntegrationCalendarRead";
 }

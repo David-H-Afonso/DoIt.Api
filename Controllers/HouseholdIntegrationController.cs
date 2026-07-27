@@ -31,6 +31,17 @@ public sealed class HouseholdIntegrationController(IHouseholdIntegrationService 
         return Ok(await integrationService.GetNowAsync(GetIntegrationUserId(), date, timeZoneId, cancellationToken));
     }
 
+    [HttpGet("v1/calendar/events")]
+    [Authorize(Policy = HouseholdIntegrationPolicies.CalendarRead)]
+    [ProducesResponseType<IReadOnlyList<CalendarEventResponse>>(StatusCodes.Status200OK)]
+    public async Task<ActionResult<IReadOnlyList<CalendarEventResponse>>> CalendarEvents(
+        [FromQuery] DateTimeOffset? from,
+        [FromQuery] DateTimeOffset? to,
+        CancellationToken cancellationToken)
+    {
+        return Ok(await integrationService.GetCalendarEventsAsync(GetIntegrationUserId(), from, to, cancellationToken));
+    }
+
     [HttpPost("v1/occurrences/{occurrenceId:guid}/complete")]
     [Authorize(Policy = HouseholdIntegrationPolicies.TasksComplete)]
     [ProducesResponseType<HouseholdOccurrenceActionResponse>(StatusCodes.Status200OK)]

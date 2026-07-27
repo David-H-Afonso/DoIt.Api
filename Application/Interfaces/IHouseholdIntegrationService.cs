@@ -12,4 +12,5 @@ public interface IHouseholdIntegrationService
     Task<OccurrenceActionResponse> CompleteTaskAsync(Guid userId, Guid taskId, CancellationToken cancellationToken);
     Task<OccurrenceActionResponse> UndoTaskAsync(Guid userId, Guid taskId, CancellationToken cancellationToken);
     Task<TaskResponse> CreateTaskAsync(Guid userId, HouseholdCreateTaskRequest request, CancellationToken cancellationToken);
+    Task<IReadOnlyList<CalendarEventResponse>> GetCalendarEventsAsync(Guid userId, DateTimeOffset? from, DateTimeOffset? to, CancellationToken cancellationToken);
 }

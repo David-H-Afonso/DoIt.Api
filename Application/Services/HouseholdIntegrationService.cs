@@ -15,6 +15,7 @@ public sealed class HouseholdIntegrationService(
     ITaskService taskService,
     ITaskActionService taskActionService,
     IOccurrenceService occurrenceService,
+    ICalendarEventService calendarEventService,
     TimeProvider timeProvider) : IHouseholdIntegrationService
 {
     public async Task<NowResponse> GetSummaryAsync(Guid userId, DateOnly? date, CancellationToken cancellationToken)
@@ -93,6 +94,16 @@ public sealed class HouseholdIntegrationService(
             AssignmentMode.Anyone.ToString());
 
         return await taskService.CreateAsync(userId, createRequest, cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<CalendarEventResponse>> GetCalendarEventsAsync(
+        Guid userId,
+        DateTimeOffset? from,
+        DateTimeOffset? to,
+        CancellationToken cancellationToken)
+    {
+        await EnsureIntegrationUserAsync(userId, cancellationToken);
+        return await calendarEventService.ListAsync(userId, from, to, cancellationToken);
     }
 
     private async Task<TaskOccurrence> GetCurrentHouseholdOccurrenceAsync(Guid userId, Guid taskId, bool allowArchived, CancellationToken cancellationToken)

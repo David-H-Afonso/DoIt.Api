@@ -7,6 +7,7 @@ public static class HouseholdIntegrationScopes
     public const string TasksComplete = "tasks.complete";
     public const string TasksUndo = "tasks.undo";
     public const string TasksCreate = "tasks.create";
+    public const string CalendarRead = "calendar.read";
 
     public static readonly IReadOnlySet<string> Allowed = new HashSet<string>(StringComparer.Ordinal)
     {
@@ -14,6 +15,7 @@ public static class HouseholdIntegrationScopes
         TasksRead,
         TasksComplete,
         TasksUndo,
-        TasksCreate
+        TasksCreate,
+        CalendarRead
     };
 }
