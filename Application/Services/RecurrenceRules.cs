@@ -78,12 +78,71 @@ public static class RecurrenceRules
         return candidate is not null && (schedule.EndDate is null || candidate <= schedule.EndDate) ? candidate : null;
     }
 
+    public static DateOnly? GetEffectiveOccurrenceDate(TaskSchedule schedule, DateOnly date)
+    {
+        if (AppliesOnDate(schedule, date))
+        {
+            return date;
+        }
+
+        if (!schedule.ExtendsUntilNextOccurrence || date < schedule.StartDate || schedule.EndDate is not null && date > schedule.EndDate)
+        {
+            return null;
+        }
+
+        var previous = GetPreviousOccurrenceDate(schedule, date);
+        if (previous is null)
+        {
+            return null;
+        }
+
+        var next = GetNextOccurrenceDate(schedule, previous.Value);
+        return next is not null && date < next.Value ? previous : null;
+    }
+
+    public static bool IsExpiredExtendedOccurrence(TaskSchedule schedule, DateOnly occurrenceDate, DateOnly date)
+    {
+        return schedule.ExtendsUntilNextOccurrence
+            && GetNextOccurrenceDate(schedule, occurrenceDate) is { } next
+            && date >= next;
+    }
+
+    private static DateOnly? GetPreviousOccurrenceDate(TaskSchedule schedule, DateOnly before)
+    {
+        var maximum = before.AddDays(-1);
+        if (maximum < schedule.StartDate)
+        {
+            return null;
+        }
+
+        DateOnly? candidate = schedule.RecurrenceType switch
+        {
+            RecurrenceType.Weekly => PreviousWeekday(maximum, schedule.StartDate.DayOfWeek),
+            RecurrenceType.Weekday when schedule.Weekday is not null => PreviousWeekday(maximum, schedule.Weekday.Value),
+            RecurrenceType.EveryNDays when schedule.EveryNDays is > 0 => PreviousEveryNDays(schedule.StartDate, maximum, schedule.EveryNDays.Value),
+            RecurrenceType.EveryNWeeks when schedule.Interval is > 0 => PreviousEveryNWeeks(schedule.StartDate, maximum, schedule.Interval.Value),
+            RecurrenceType.Monthly => PreviousMonthlyDate(schedule.StartDate, maximum, 1),
+            RecurrenceType.EveryNMonths when schedule.Interval is > 0 => PreviousMonthlyDate(schedule.StartDate, maximum, schedule.Interval.Value),
+            RecurrenceType.EveryNYears when schedule.Interval is > 0 => PreviousYearlyDate(schedule.StartDate, maximum, schedule.Interval.Value),
+            RecurrenceType.MonthlyOrdinalWeekday when schedule.Weekday is not null && schedule.WeekOfMonth is > 0 => PreviousMonthlyOrdinalWeekday(maximum, schedule.Weekday.Value, schedule.WeekOfMonth.Value),
+            _ => null
+        };
+
+        return candidate is not null && candidate.Value >= schedule.StartDate ? candidate : null;
+    }
+
     private static int DaysSince(DateOnly start, DateOnly date) => date.DayNumber - start.DayNumber;
 
     private static DateOnly NextWeekday(DateOnly minimum, DayOfWeek weekday)
     {
         var daysUntil = ((int)weekday - (int)minimum.DayOfWeek + 7) % 7;
         return minimum.AddDays(daysUntil);
+    }
+
+    private static DateOnly PreviousWeekday(DateOnly maximum, DayOfWeek weekday)
+    {
+        var daysSince = ((int)maximum.DayOfWeek - (int)weekday + 7) % 7;
+        return maximum.AddDays(-daysSince);
     }
 
     private static DateOnly NextEveryNDays(DateOnly start, DateOnly minimum, int interval)
@@ -93,12 +152,26 @@ public static class RecurrenceRules
         return minimum.AddDays(daysUntil);
     }
 
+    private static DateOnly PreviousEveryNDays(DateOnly start, DateOnly maximum, int interval)
+    {
+        var daysSinceStart = DaysSince(start, maximum);
+        return start.AddDays(daysSinceStart - daysSinceStart % interval);
+    }
+
     private static DateOnly NextEveryNWeeks(DateOnly start, DateOnly minimum, int interval)
     {
         var weeksSinceStart = Math.Max(0, DaysSince(start, minimum) / 7);
         var alignedWeeks = (weeksSinceStart + interval - 1) / interval * interval;
         var candidate = start.AddDays(alignedWeeks * 7);
         return candidate < minimum ? candidate.AddDays(interval * 7) : candidate;
+    }
+
+    private static DateOnly PreviousEveryNWeeks(DateOnly start, DateOnly maximum, int interval)
+    {
+        var weeksSinceStart = Math.Max(0, DaysSince(start, maximum) / 7);
+        var alignedWeeks = weeksSinceStart / interval * interval;
+        var candidate = start.AddDays(alignedWeeks * 7);
+        return candidate > maximum ? candidate.AddDays(-interval * 7) : candidate;
     }
 
     private static DateOnly NextMonthlyDate(DateOnly start, DateOnly minimum, int interval)
@@ -114,6 +187,19 @@ public static class RecurrenceRules
         return candidate;
     }
 
+    private static DateOnly PreviousMonthlyDate(DateOnly start, DateOnly maximum, int interval)
+    {
+        var monthsSinceStart = (maximum.Year - start.Year) * 12 + maximum.Month - start.Month;
+        var alignedMonths = Math.Max(0, monthsSinceStart / interval * interval);
+        var candidate = CreateMonthlyDate(start, alignedMonths);
+        if (candidate > maximum)
+        {
+            candidate = CreateMonthlyDate(start, alignedMonths - interval);
+        }
+
+        return candidate;
+    }
+
     private static DateOnly NextYearlyDate(DateOnly start, DateOnly minimum, int interval)
     {
         var yearsSinceStart = minimum.Year - start.Year;
@@ -122,6 +208,19 @@ public static class RecurrenceRules
         if (candidate < minimum)
         {
             candidate = CreateYearlyDate(start, alignedYears + interval);
+        }
+
+        return candidate;
+    }
+
+    private static DateOnly PreviousYearlyDate(DateOnly start, DateOnly maximum, int interval)
+    {
+        var yearsSinceStart = maximum.Year - start.Year;
+        var alignedYears = Math.Max(0, yearsSinceStart / interval * interval);
+        var candidate = CreateYearlyDate(start, alignedYears);
+        if (candidate > maximum)
+        {
+            candidate = CreateYearlyDate(start, alignedYears - interval);
         }
 
         return candidate;
@@ -154,6 +253,28 @@ public static class RecurrenceRules
                 {
                     return candidate;
                 }
+            }
+        }
+
+        return null;
+    }
+
+    private static DateOnly? PreviousMonthlyOrdinalWeekday(DateOnly maximum, DayOfWeek weekday, int weekOfMonth)
+    {
+        for (var monthOffset = 0; monthOffset <= 1200; monthOffset++)
+        {
+            var candidateMonth = new DateOnly(maximum.Year, maximum.Month, 1).AddMonths(-monthOffset);
+            var daysUntilWeekday = ((int)weekday - (int)candidateMonth.DayOfWeek + 7) % 7;
+            var day = 1 + daysUntilWeekday + (weekOfMonth - 1) * 7;
+            if (day > DateTime.DaysInMonth(candidateMonth.Year, candidateMonth.Month))
+            {
+                continue;
+            }
+
+            var candidate = new DateOnly(candidateMonth.Year, candidateMonth.Month, day);
+            if (candidate <= maximum)
+            {
+                return candidate;
             }
         }
 

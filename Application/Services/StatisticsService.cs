@@ -121,6 +121,7 @@ public sealed class StatisticsService(DoItDbContext dbContext) : IStatisticsServ
             TaskCompletionAction.NotApplicable => "NotApplicable",
             TaskCompletionAction.Missed => "Missed",
             _ when task.Schedule?.RecurrenceType == RecurrenceType.Manual && task.Schedule.AvailableUntilTime is null => "Pending",
+            _ when task.Schedule is not null && RecurrenceRules.IsExpiredExtendedOccurrence(task.Schedule, scheduledDate, today) => "Pending",
             _ when scheduledDate < today => "Missed",
             _ => "Pending"
         };

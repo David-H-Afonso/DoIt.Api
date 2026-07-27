@@ -15,5 +15,6 @@ public sealed record TaskScheduleResponse(
     TimeOnly? RecommendedTime,
     string UnavailableVisibilityMode,
     string TimeZoneId,
+    bool ExtendsUntilNextOccurrence,
     DateTime CreatedAt,
     DateTime UpdatedAt);

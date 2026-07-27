@@ -119,6 +119,11 @@ public sealed class ReviewService(DoItDbContext dbContext, IOccurrenceService oc
     private static bool IsNotDoneForReview(TaskOccurrence occurrence, DateOnly date, DateOnly today)
     {
         var activeCompletion = ActiveCompletion(occurrence);
+        if (occurrence.Task?.Schedule is { } schedule && RecurrenceRules.IsExpiredExtendedOccurrence(schedule, occurrence.Date, today))
+        {
+            return false;
+        }
+
         if (occurrence.Task?.Schedule?.RecurrenceType == RecurrenceType.Manual && occurrence.Task.Schedule.AvailableUntilTime is null)
         {
             return false;

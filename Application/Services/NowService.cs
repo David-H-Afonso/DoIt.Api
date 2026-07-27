@@ -39,16 +39,29 @@ public sealed class NowService(DoItDbContext dbContext, IOccurrenceService occur
                 continue;
             }
 
-            var classified = Classify(task, targetDate, GetCurrentTime(task.Schedule?.TimeZoneId, targetDate));
+            var occurrenceDate = task.Schedule is null
+                ? null
+                : task.Schedule.RecurrenceType == RecurrenceType.Manual
+                    ? RecurrenceRules.AppliesOnDate(task.Schedule, targetDate) ? task.Schedule.StartDate : null
+                : RecurrenceRules.GetEffectiveOccurrenceDate(task.Schedule, targetDate);
+            if (occurrenceDate is null)
+            {
+                continue;
+            }
+
+            var classified = Classify(task, GetCurrentTime(task.Schedule?.TimeZoneId, targetDate));
             if (classified is null)
             {
                 continue;
             }
 
-            var occurrenceDate = task.Schedule?.RecurrenceType == RecurrenceType.Manual && task.Schedule.StartDate < targetDate
-                ? task.Schedule.StartDate
-                : targetDate;
-            var occurrence = await occurrenceService.GetOrCreateAsync(task, occurrenceDate, now, cancellationToken);
+            var effectiveDate = occurrenceDate.Value;
+            var occurrence = await occurrenceService.GetOrCreateAsync(task, effectiveDate, now, cancellationToken);
+            if (effectiveDate < targetDate && occurrence.Status != OccurrenceStatus.Pending)
+            {
+                continue;
+            }
+
             if (normalizedScope == "me" && task.AssignmentMode == AssignmentMode.AllAssignees && await UserAlreadyCompletedAsync(userId, occurrence.Id, cancellationToken))
             {
                 continue;
@@ -141,13 +154,9 @@ public sealed class NowService(DoItDbContext dbContext, IOccurrenceService occur
         return new NowProgressResponse(occurrenceList.Count, done, missed, notApplicable, pending);
     }
 
-    private static NowItem? Classify(DoItTask task, DateOnly date, TimeOnly currentTime)
+    private static NowItem? Classify(DoItTask task, TimeOnly currentTime)
     {
-        var schedule = task.Schedule;
-        if (schedule is null || !AppliesOnDate(task, schedule, date))
-        {
-            return null;
-        }
+        var schedule = task.Schedule ?? throw new InvalidOperationException("A task occurrence requires a schedule.");
 
         if (schedule.AvailableFromTime is not null && currentTime < schedule.AvailableFromTime)
         {
@@ -160,11 +169,6 @@ public sealed class NowService(DoItDbContext dbContext, IOccurrenceService occur
         }
 
         return new NowItem(task, null!, "available");
-    }
-
-    private static bool AppliesOnDate(DoItTask task, TaskSchedule schedule, DateOnly date)
-    {
-        return schedule is not null && RecurrenceRules.AppliesOnDate(schedule, date);
     }
 
     private async Task<bool> WeeklyTargetReachedAsync(DoItTask task, DateOnly date, CancellationToken cancellationToken)

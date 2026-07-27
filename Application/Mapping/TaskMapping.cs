@@ -63,6 +63,7 @@ public static class TaskMapping
             schedule.RecommendedTime,
             schedule.UnavailableVisibilityMode.ToString(),
             schedule.TimeZoneId,
+            schedule.ExtendsUntilNextOccurrence,
             schedule.CreatedAt,
             schedule.UpdatedAt);
     }

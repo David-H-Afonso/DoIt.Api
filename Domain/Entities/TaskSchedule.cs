@@ -19,6 +19,7 @@ public sealed class TaskSchedule
     public TimeOnly? RecommendedTime { get; set; }
     public string TimeZoneId { get; set; } = "UTC";
     public UnavailableVisibilityMode UnavailableVisibilityMode { get; set; } = UnavailableVisibilityMode.Dimmed;
+    public bool ExtendsUntilNextOccurrence { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime UpdatedAt { get; set; }
 

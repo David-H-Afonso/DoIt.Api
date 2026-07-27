@@ -184,9 +184,10 @@ public sealed class TaskService(DoItDbContext dbContext, IOccurrenceService occu
         }
 
         var today = DateOnly.FromDateTime(TimeZoneInfo.ConvertTimeFromUtc(now, TimeZoneHelper.Find(task.Schedule.TimeZoneId)).Date);
-        if (RecurrenceRules.AppliesOnDate(task.Schedule, today))
+        var effectiveDate = RecurrenceRules.GetEffectiveOccurrenceDate(task.Schedule, today);
+        if (effectiveDate is not null)
         {
-            var date = task.Schedule.RecurrenceType == RecurrenceType.Manual ? task.Schedule.StartDate : today;
+            var date = task.Schedule.RecurrenceType == RecurrenceType.Manual ? task.Schedule.StartDate : effectiveDate.Value;
             var occurrence = await dbContext.TaskOccurrences
                 .Include(candidate => candidate.Completions)
                 .FirstOrDefaultAsync(candidate => candidate.TaskId == task.Id && candidate.Date == date, cancellationToken);
@@ -284,6 +285,7 @@ public sealed class TaskService(DoItDbContext dbContext, IOccurrenceService occu
         var recommended = request?.RecommendedTime;
         var timeZoneId = TimeZoneHelper.Normalize(request?.TimeZoneId);
         var unavailableMode = ParseEnum(request?.UnavailableVisibilityMode, UnavailableVisibilityMode.Dimmed);
+        var extendsUntilNextOccurrence = request?.ExtendsUntilNextOccurrence ?? schedule.ExtendsUntilNextOccurrence;
 
         ValidateSchedule(recurrenceType, availableFrom, availableUntil, weekday, timesPerWeek, everyNDays, weekOfMonth, interval);
 
@@ -300,6 +302,7 @@ public sealed class TaskService(DoItDbContext dbContext, IOccurrenceService occu
         schedule.RecommendedTime = recommended;
         schedule.TimeZoneId = timeZoneId;
         schedule.UnavailableVisibilityMode = unavailableMode;
+        schedule.ExtendsUntilNextOccurrence = extendsUntilNextOccurrence;
         schedule.UpdatedAt = now;
     }
 

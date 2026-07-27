@@ -208,10 +208,11 @@ public sealed class BackupService(DoItDbContext dbContext, ILogger<BackupService
                     task.Schedule.Interval,
                     task.Schedule.AvailableFromTime,
                     task.Schedule.AvailableUntilTime,
-                    task.Schedule.RecommendedTime,
-                    task.Schedule.TimeZoneId,
-                    UnavailableVisibilityMode = task.Schedule.UnavailableVisibilityMode.ToString(),
-                    task.Schedule.CreatedAt,
+                     task.Schedule.RecommendedTime,
+                     task.Schedule.TimeZoneId,
+                     UnavailableVisibilityMode = task.Schedule.UnavailableVisibilityMode.ToString(),
+                     task.Schedule.ExtendsUntilNextOccurrence,
+                     task.Schedule.CreatedAt,
                     task.Schedule.UpdatedAt
                 },
                 assignments = task.Assignments.Select(assignment => new { assignment.Id, assignment.TaskId, assignment.UserId, Role = assignment.Role.ToString(), assignment.CreatedAt })

@@ -13,4 +13,5 @@ public sealed record TaskScheduleRequest(
     string? UnavailableVisibilityMode,
     string? TimeZoneId = null,
     int? WeekOfMonth = null,
-    int? Interval = null);
+    int? Interval = null,
+    bool? ExtendsUntilNextOccurrence = null);
