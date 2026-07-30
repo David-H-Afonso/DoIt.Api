@@ -27,6 +27,7 @@ public sealed class NotificationPreferenceService(DoItDbContext dbContext) : INo
         preference.AvailableFromEnabled = request.AvailableFromEnabled ?? preference.AvailableFromEnabled;
         preference.RecommendedEnabled = request.RecommendedEnabled ?? preference.RecommendedEnabled;
         preference.BeforeAvailableUntilEnabled = request.BeforeAvailableUntilEnabled ?? preference.BeforeAvailableUntilEnabled;
+        preference.TaskExpiredEnabled = request.TaskExpiredEnabled ?? preference.TaskExpiredEnabled;
         preference.TaskCompletedEnabled = request.TaskCompletedEnabled ?? preference.TaskCompletedEnabled;
         preference.BeforeAvailableUntilMinutes = NormalizeOffset(request.BeforeAvailableUntilMinutes ?? preference.BeforeAvailableUntilMinutes);
         preference.UpdatedAt = DateTime.UtcNow;
@@ -73,6 +74,7 @@ public sealed class NotificationPreferenceService(DoItDbContext dbContext) : INo
         notificationOverride.AvailableFromEnabled = request.AvailableFromEnabled;
         notificationOverride.RecommendedEnabled = request.RecommendedEnabled;
         notificationOverride.BeforeAvailableUntilEnabled = request.BeforeAvailableUntilEnabled;
+        notificationOverride.TaskExpiredEnabled = request.TaskExpiredEnabled;
         notificationOverride.TaskCompletedEnabled = request.TaskCompletedEnabled;
         notificationOverride.BeforeAvailableUntilMinutes = request.BeforeAvailableUntilMinutes is null
             ? null
@@ -175,6 +177,7 @@ public sealed class NotificationPreferenceService(DoItDbContext dbContext) : INo
         preference.AvailableFromEnabled,
         preference.RecommendedEnabled,
         preference.BeforeAvailableUntilEnabled,
+        preference.TaskExpiredEnabled,
         preference.TaskCompletedEnabled,
         preference.BeforeAvailableUntilMinutes);
 
@@ -183,6 +186,7 @@ public sealed class NotificationPreferenceService(DoItDbContext dbContext) : INo
         notificationOverride?.AvailableFromEnabled,
         notificationOverride?.RecommendedEnabled,
         notificationOverride?.BeforeAvailableUntilEnabled,
+        notificationOverride?.TaskExpiredEnabled,
         notificationOverride?.TaskCompletedEnabled,
         notificationOverride?.BeforeAvailableUntilMinutes);
 }

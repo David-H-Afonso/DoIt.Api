@@ -139,6 +139,7 @@ public sealed class NotificationDispatcher(
                     || delivery.SourceType == TaskNotificationService.AvailableFromSourceType
                     || delivery.SourceType == TaskNotificationService.RecommendedSourceType
                     || delivery.SourceType == TaskNotificationService.BeforeAvailableUntilSourceType
+                    || delivery.SourceType == TaskNotificationService.ExpiredSourceType
                     || delivery.SourceType == TaskNotificationService.CompletedSourceType)
                 && delivery.DueAtUtc <= now
                 && delivery.AttemptCount < maxAttempts

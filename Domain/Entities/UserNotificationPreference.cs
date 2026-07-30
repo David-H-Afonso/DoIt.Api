@@ -6,6 +6,7 @@ public sealed class UserNotificationPreference
     public bool AvailableFromEnabled { get; set; } = true;
     public bool RecommendedEnabled { get; set; } = true;
     public bool BeforeAvailableUntilEnabled { get; set; } = true;
+    public bool TaskExpiredEnabled { get; set; } = true;
     public bool TaskCompletedEnabled { get; set; } = true;
     public int BeforeAvailableUntilMinutes { get; set; } = 30;
     public DateTime CreatedAt { get; set; }

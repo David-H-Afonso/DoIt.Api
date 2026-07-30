@@ -22,6 +22,7 @@ public sealed class TaskNotificationService(
     public const string AvailableFromSourceType = "TaskAvailableFrom";
     public const string RecommendedSourceType = "TaskRecommended";
     public const string BeforeAvailableUntilSourceType = "TaskBeforeAvailableUntil";
+    public const string ExpiredSourceType = "TaskExpired";
     public const string CompletedSourceType = "TaskCompleted";
 
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
@@ -32,6 +33,7 @@ public sealed class TaskNotificationService(
         AvailableFromSourceType or
         RecommendedSourceType or
         BeforeAvailableUntilSourceType or
+        ExpiredSourceType or
         CompletedSourceType;
 
     public async Task EnsureScheduledDeliveriesAsync(DateTime now, CancellationToken cancellationToken)
@@ -272,6 +274,10 @@ public sealed class TaskNotificationService(
 
                 dueAtUtc = occurrence.AvailableUntilAt?.AddMinutes(-endOffsetMinutes.Value);
                 break;
+            case ExpiredSourceType:
+                dueAtUtc = occurrence.AvailableUntilAt;
+                enabled = IsEnabled(occurrence.Task.NotificationOverride?.TaskExpiredEnabled, preference.TaskExpiredEnabled);
+                break;
             default:
                 return null;
         }
@@ -414,6 +420,18 @@ public sealed class TaskNotificationService(
             nowUtc,
             existingKeys,
             newDeliveries);
+        QueueScheduledEvent(
+            task.NotificationOverride?.TaskExpiredEnabled,
+            preference.TaskExpiredEnabled,
+            occurrence.AvailableUntilAt,
+            ExpiredSourceType,
+            occurrence,
+            recipientId,
+            subscriptions,
+            fromUtc,
+            nowUtc,
+            existingKeys,
+            newDeliveries);
     }
 
     private static void QueueScheduledEvent(
@@ -500,6 +518,7 @@ public sealed class TaskNotificationService(
                 && (delivery.SourceType == AvailableFromSourceType
                     || delivery.SourceType == RecommendedSourceType
                     || delivery.SourceType == BeforeAvailableUntilSourceType
+                    || delivery.SourceType == ExpiredSourceType
                     || delivery.SourceType == CompletedSourceType))
             .Select(delivery => new { delivery.PushSubscriptionId, delivery.DeduplicationKey })
             .ToListAsync(cancellationToken);
@@ -643,6 +662,7 @@ public sealed class TaskNotificationService(
             AvailableFromSourceType => ($"Ya disponible: {task.Title}", "La tarea ha entrado en su horario disponible."),
             RecommendedSourceType => ($"Hora recomendada: {task.Title}", "Es un buen momento para hacer esta tarea."),
             BeforeAvailableUntilSourceType => ($"Próximo fin: {task.Title}", $"La disponibilidad termina en {context.EndOffsetMinutes} minutos."),
+            ExpiredSourceType => ($"Tarea vencida: {task.Title}", "La ventana de disponibilidad ha terminado."),
             CompletedSourceType => ($"Tarea completada: {task.Title}", "La tarea se ha completado."),
             _ => ($"Tarea: {task.Title}", "Tienes una actualización de una tarea.")
         };

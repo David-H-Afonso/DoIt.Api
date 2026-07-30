@@ -6,6 +6,7 @@ public sealed class TaskNotificationOverride
     public bool? AvailableFromEnabled { get; set; }
     public bool? RecommendedEnabled { get; set; }
     public bool? BeforeAvailableUntilEnabled { get; set; }
+    public bool? TaskExpiredEnabled { get; set; }
     public bool? TaskCompletedEnabled { get; set; }
     public int? BeforeAvailableUntilMinutes { get; set; }
     public DateTime CreatedAt { get; set; }
