@@ -379,18 +379,12 @@ public sealed class TaskNotificationService(
         ISet<string> existingKeys,
         ICollection<NotificationDelivery> newDeliveries)
     {
-        QueueScheduledEvent(
-            task.NotificationOverride?.AvailableFromEnabled,
-            preference.AvailableFromEnabled,
-            occurrence.AvailableFromAt,
-            AvailableFromSourceType,
-            occurrence,
-            recipientId,
-            subscriptions,
-            fromUtc,
-            nowUtc,
-            existingKeys,
-            newDeliveries);
+        var recommendedEnabled = IsEnabled(
+            task.NotificationOverride?.RecommendedEnabled,
+            preference.RecommendedEnabled);
+        var recommendedDueAtUtc = recommendedEnabled ? occurrence.RecommendedAt : null;
+
+        // Prefer the specific recommended-time notification when two task moments coincide.
         QueueScheduledEvent(
             task.NotificationOverride?.RecommendedEnabled,
             preference.RecommendedEnabled,
@@ -403,6 +397,19 @@ public sealed class TaskNotificationService(
             nowUtc,
             existingKeys,
             newDeliveries);
+        QueueScheduledEvent(
+            task.NotificationOverride?.AvailableFromEnabled,
+            preference.AvailableFromEnabled,
+            occurrence.AvailableFromAt,
+            AvailableFromSourceType,
+            occurrence,
+            recipientId,
+            subscriptions,
+            fromUtc,
+            nowUtc,
+            existingKeys,
+            newDeliveries,
+            recommendedDueAtUtc);
 
         var endOffsetMinutes = task.NotificationOverride?.BeforeAvailableUntilMinutes ?? preference.BeforeAvailableUntilMinutes;
         var endDueAtUtc = IsValidEndOffset(endOffsetMinutes)
@@ -419,7 +426,8 @@ public sealed class TaskNotificationService(
             fromUtc,
             nowUtc,
             existingKeys,
-            newDeliveries);
+            newDeliveries,
+            recommendedDueAtUtc);
         QueueScheduledEvent(
             task.NotificationOverride?.TaskExpiredEnabled,
             preference.TaskExpiredEnabled,
@@ -431,7 +439,8 @@ public sealed class TaskNotificationService(
             fromUtc,
             nowUtc,
             existingKeys,
-            newDeliveries);
+            newDeliveries,
+            recommendedDueAtUtc);
     }
 
     private static void QueueScheduledEvent(
@@ -445,10 +454,12 @@ public sealed class TaskNotificationService(
         DateTime fromUtc,
         DateTime nowUtc,
         ISet<string> existingKeys,
-        ICollection<NotificationDelivery> newDeliveries)
+        ICollection<NotificationDelivery> newDeliveries,
+        DateTime? skipIfDueAtUtc = null)
     {
         if (!IsEnabled(overrideEnabled, preferenceEnabled)
             || dueAtUtc is null
+            || dueAtUtc == skipIfDueAtUtc
             || !IsValidDueAt(dueAtUtc.Value, fromUtc, nowUtc))
         {
             return;
