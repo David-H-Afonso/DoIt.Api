@@ -13,6 +13,7 @@ namespace DoIt.Api.Application.Services;
 public sealed class NotificationDispatcher(
     DoItDbContext dbContext,
     IWebPushSender webPushSender,
+    ITaskNotificationService taskNotificationService,
     IOptions<WebPushSettings> webPushOptions,
     TimeProvider timeProvider,
     ILogger<NotificationDispatcher> logger) : INotificationDispatcher
@@ -38,6 +39,7 @@ public sealed class NotificationDispatcher(
 
         var now = _timeProvider.GetUtcNow().UtcDateTime;
         await EnsureCalendarReminderDeliveriesAsync(now, cancellationToken);
+        await taskNotificationService.EnsureScheduledDeliveriesAsync(now, cancellationToken);
         return await ProcessDeliveriesAsync(now, cancellationToken);
     }
 
@@ -133,7 +135,12 @@ public sealed class NotificationDispatcher(
         var maxAttempts = Math.Max(1, _settings.MaxAttempts);
         var candidateIds = await dbContext.NotificationDeliveries
             .AsNoTracking()
-            .Where(delivery => delivery.SourceType == CalendarReminderSourceType
+            .Where(delivery => (delivery.SourceType == CalendarReminderSourceType
+                    || delivery.SourceType == TaskNotificationService.AvailableFromSourceType
+                    || delivery.SourceType == TaskNotificationService.RecommendedSourceType
+                    || delivery.SourceType == TaskNotificationService.BeforeAvailableUntilSourceType
+                    || delivery.SourceType == TaskNotificationService.CompletedSourceType)
+                && delivery.DueAtUtc <= now
                 && delivery.AttemptCount < maxAttempts
                 && (delivery.NextAttemptAtUtc == null || delivery.NextAttemptAtUtc <= now)
                 && (delivery.Status == NotificationDeliveryStatus.Pending
@@ -206,31 +213,59 @@ public sealed class NotificationDispatcher(
             return;
         }
 
-        var reminder = await dbContext.CalendarEventReminders
-            .AsNoTracking()
-            .Include(candidate => candidate.CalendarEvent)
-            .FirstOrDefaultAsync(candidate => candidate.Id == delivery.SourceId, cancellationToken);
-
-        if (reminder?.CalendarEvent is null || !IsStillEligible(delivery, reminder, now))
+        string? payload;
+        if (delivery.SourceType == CalendarReminderSourceType)
         {
-            await MarkTerminalFailureAsync(delivery, now, maxAttempts, "Calendar reminder is no longer eligible.", cancellationToken);
+            var reminder = await dbContext.CalendarEventReminders
+                .AsNoTracking()
+                .Include(candidate => candidate.CalendarEvent)
+                .FirstOrDefaultAsync(candidate => candidate.Id == delivery.SourceId, cancellationToken);
+
+            if (reminder?.CalendarEvent is null || !IsStillEligible(delivery, reminder, now))
+            {
+                await MarkTerminalFailureAsync(delivery, now, maxAttempts, "Calendar reminder is no longer eligible.", cancellationToken);
+                return;
+            }
+
+            if (delivery.PushSubscription is null
+                || !delivery.PushSubscription.IsActive
+                || delivery.PushSubscription.UserId != reminder.CalendarEvent.CreatedByUserId
+                || delivery.UserId != reminder.CalendarEvent.CreatedByUserId)
+            {
+                await MarkTerminalFailureAsync(delivery, now, maxAttempts, "Push subscription is no longer active.", cancellationToken);
+                return;
+            }
+
+            payload = BuildPayload(reminder, CalculateDueAtUtc(reminder));
+        }
+        else if (TaskNotificationService.IsTaskSourceType(delivery.SourceType))
+        {
+            payload = await taskNotificationService.BuildPayloadIfEligibleAsync(delivery, now, cancellationToken);
+            if (payload is null)
+            {
+                await MarkTerminalFailureAsync(delivery, now, maxAttempts, "Task notification is no longer eligible.", cancellationToken);
+                return;
+            }
+
+            if (delivery.PushSubscription is null
+                || !delivery.PushSubscription.IsActive
+                || delivery.PushSubscription.UserId != delivery.UserId)
+            {
+                await MarkTerminalFailureAsync(delivery, now, maxAttempts, "Push subscription is no longer active.", cancellationToken);
+                return;
+            }
+        }
+        else
+        {
+            await MarkTerminalFailureAsync(delivery, now, maxAttempts, "Notification source is not supported.", cancellationToken);
             return;
         }
 
-        if (delivery.PushSubscription is null
-            || !delivery.PushSubscription.IsActive
-            || delivery.PushSubscription.UserId != reminder.CalendarEvent.CreatedByUserId
-            || delivery.UserId != reminder.CalendarEvent.CreatedByUserId)
-        {
-            await MarkTerminalFailureAsync(delivery, now, maxAttempts, "Push subscription is no longer active.", cancellationToken);
-            return;
-        }
-
-        var payload = BuildPayload(reminder, CalculateDueAtUtc(reminder));
+        var pushSubscription = delivery.PushSubscription!;
         WebPushSendResult sendResult;
         try
         {
-            sendResult = await webPushSender.SendAsync(delivery.PushSubscription, payload, cancellationToken);
+            sendResult = await webPushSender.SendAsync(pushSubscription, payload, cancellationToken);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -248,16 +283,16 @@ public sealed class NotificationDispatcher(
             delivery.SentAtUtc = _timeProvider.GetUtcNow().UtcDateTime;
             delivery.LastError = null;
             delivery.UpdatedAt = delivery.SentAtUtc.Value;
-            delivery.PushSubscription.LastSeenAt = delivery.UpdatedAt;
-            delivery.PushSubscription.UpdatedAt = delivery.UpdatedAt;
+            pushSubscription.LastSeenAt = delivery.UpdatedAt;
+            pushSubscription.UpdatedAt = delivery.UpdatedAt;
             await dbContext.SaveChangesAsync(cancellationToken);
             return;
         }
 
         if (sendResult.IsExpired)
         {
-            delivery.PushSubscription.IsActive = false;
-            delivery.PushSubscription.UpdatedAt = now;
+            pushSubscription.IsActive = false;
+            pushSubscription.UpdatedAt = now;
             await MarkTerminalFailureAsync(delivery, now, maxAttempts, sendResult.Error ?? "Push subscription is no longer valid.", cancellationToken);
             return;
         }

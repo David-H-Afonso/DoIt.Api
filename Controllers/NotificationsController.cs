@@ -12,7 +12,9 @@ namespace DoIt.Api.Controllers;
 [Authorize]
 [EnableRateLimiting("notifications")]
 [Route("api/notifications")]
-public sealed class NotificationsController(IPushSubscriptionService pushSubscriptionService) : ControllerBase
+public sealed class NotificationsController(
+    IPushSubscriptionService pushSubscriptionService,
+    INotificationPreferenceService notificationPreferenceService) : ControllerBase
 {
     [HttpGet("config")]
     [ProducesResponseType<WebPushConfigResponse>(StatusCodes.Status200OK)]
@@ -42,6 +44,49 @@ public sealed class NotificationsController(IPushSubscriptionService pushSubscri
         }
 
         await pushSubscriptionService.DeactivateAsync(GetUserId(), request, cancellationToken);
+        return NoContent();
+    }
+
+    [HttpGet("preferences")]
+    [ProducesResponseType<NotificationPreferenceResponse>(StatusCodes.Status200OK)]
+    public async Task<ActionResult<NotificationPreferenceResponse>> GetPreferences(CancellationToken cancellationToken)
+    {
+        return Ok(await notificationPreferenceService.GetAsync(GetUserId(), cancellationToken));
+    }
+
+    [HttpPut("preferences")]
+    [ProducesResponseType<NotificationPreferenceResponse>(StatusCodes.Status200OK)]
+    public async Task<ActionResult<NotificationPreferenceResponse>> UpdatePreferences(
+        UpdateNotificationPreferencesRequest request,
+        CancellationToken cancellationToken)
+    {
+        return Ok(await notificationPreferenceService.UpdateAsync(GetUserId(), request, cancellationToken));
+    }
+
+    [HttpGet("tasks/{taskId:guid}")]
+    [ProducesResponseType<TaskNotificationOverrideResponse>(StatusCodes.Status200OK)]
+    public async Task<ActionResult<TaskNotificationOverrideResponse>> GetTaskOverride(
+        Guid taskId,
+        CancellationToken cancellationToken)
+    {
+        return Ok(await notificationPreferenceService.GetTaskOverrideAsync(GetUserId(), taskId, cancellationToken));
+    }
+
+    [HttpPut("tasks/{taskId:guid}")]
+    [ProducesResponseType<TaskNotificationOverrideResponse>(StatusCodes.Status200OK)]
+    public async Task<ActionResult<TaskNotificationOverrideResponse>> UpdateTaskOverride(
+        Guid taskId,
+        UpdateTaskNotificationOverrideRequest request,
+        CancellationToken cancellationToken)
+    {
+        return Ok(await notificationPreferenceService.UpdateTaskOverrideAsync(GetUserId(), taskId, request, cancellationToken));
+    }
+
+    [HttpDelete("tasks/{taskId:guid}")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    public async Task<IActionResult> DeleteTaskOverride(Guid taskId, CancellationToken cancellationToken)
+    {
+        await notificationPreferenceService.DeleteTaskOverrideAsync(GetUserId(), taskId, cancellationToken);
         return NoContent();
     }
 

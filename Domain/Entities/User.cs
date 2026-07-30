@@ -20,4 +20,5 @@ public sealed class User
     public ICollection<HouseholdConnection> HouseholdConnections { get; set; } = new List<HouseholdConnection>();
     public ICollection<PushSubscription> PushSubscriptions { get; set; } = new List<PushSubscription>();
     public ICollection<NotificationDelivery> NotificationDeliveries { get; set; } = new List<NotificationDelivery>();
+    public UserNotificationPreference? NotificationPreference { get; set; }
 }

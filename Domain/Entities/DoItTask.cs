@@ -22,6 +22,7 @@ public sealed class DoItTask
     public User? CreatedByUser { get; set; }
     public Zone? Zone { get; set; }
     public TaskSchedule? Schedule { get; set; }
+    public TaskNotificationOverride? NotificationOverride { get; set; }
     public ICollection<TaskOccurrence> Occurrences { get; set; } = new List<TaskOccurrence>();
     public ICollection<TaskAssignment> Assignments { get; set; } = new List<TaskAssignment>();
 }

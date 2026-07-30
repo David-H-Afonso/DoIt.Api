@@ -8,7 +8,10 @@ using Microsoft.EntityFrameworkCore;
 
 namespace DoIt.Api.Application.Services;
 
-public sealed class TaskActionService(DoItDbContext dbContext, IXpService xpService) : ITaskActionService
+public sealed class TaskActionService(
+    DoItDbContext dbContext,
+    IXpService xpService,
+    ITaskNotificationService taskNotificationService) : ITaskActionService
 {
     public Task<OccurrenceActionResponse> CompleteAsync(Guid userId, Guid occurrenceId, bool allowAdminOverride, CancellationToken cancellationToken)
     {
@@ -167,6 +170,11 @@ public sealed class TaskActionService(DoItDbContext dbContext, IXpService xpServ
             await dbContext.SaveChangesAsync(cancellationToken);
         }
 
+        if (action == TaskCompletionAction.Done)
+        {
+            await taskNotificationService.QueueTaskCompletedAsync(occurrence, completion, cancellationToken);
+        }
+
         return ToResponse(occurrence, xp.Item1, xp.Item2);
     }
 
@@ -180,9 +188,10 @@ public sealed class TaskActionService(DoItDbContext dbContext, IXpService xpServ
             cancellationToken);
 
         var now = DateTime.UtcNow;
+        TaskCompletion? completion = null;
         if (!hasActiveDone)
         {
-            var completion = new TaskCompletion
+            completion = new TaskCompletion
             {
                 Id = Guid.NewGuid(),
                 OccurrenceId = occurrence.Id,
@@ -209,6 +218,11 @@ public sealed class TaskActionService(DoItDbContext dbContext, IXpService xpServ
         occurrence.Status = assigneeIds.Count > 0 && assigneeIds.All(doneUserIds.Contains) ? OccurrenceStatus.Done : OccurrenceStatus.Pending;
         occurrence.UpdatedAt = now;
         await dbContext.SaveChangesAsync(cancellationToken);
+        if (completion is not null && occurrence.Status == OccurrenceStatus.Done)
+        {
+            await taskNotificationService.QueueTaskCompletedAsync(occurrence, completion, cancellationToken);
+        }
+
         return ToResponse(occurrence);
     }
 

@@ -133,6 +133,8 @@ public static class ServiceCollectionExtensions
     public static IServiceCollection AddDoItNotifications(this IServiceCollection services)
     {
         services.AddScoped<IPushSubscriptionService, PushSubscriptionService>();
+        services.AddScoped<INotificationPreferenceService, NotificationPreferenceService>();
+        services.AddScoped<ITaskNotificationService, TaskNotificationService>();
         services.AddScoped<INotificationDispatcher, NotificationDispatcher>();
         services.AddSingleton<IWebPushSender, WebPushSender>();
         services.AddHostedService<NotificationWorker>();

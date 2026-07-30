@@ -63,7 +63,8 @@ public sealed class CalendarEventService(DoItDbContext dbContext) : ICalendarEve
     public async Task<CalendarEventResponse> UpdateAsync(Guid userId, Guid eventId, UpdateCalendarEventRequest request, CancellationToken cancellationToken)
     {
         var reminders = ValidateRequest(request.Title, request.Description, request.StartAt, request.EndAt, request.TimeZoneId, request.Reminders);
-        var calendarEvent = await QueryUserEvents(userId).FirstOrDefaultAsync(candidate => candidate.Id == eventId, cancellationToken);
+        var calendarEvent = await dbContext.CalendarEvents
+            .FirstOrDefaultAsync(candidate => candidate.Id == eventId && candidate.CreatedByUserId == userId, cancellationToken);
         if (calendarEvent is null)
         {
             throw new ApiException(StatusCodes.Status404NotFound, "calendar_event_not_found", "Calendar event not found.");
@@ -80,10 +81,16 @@ public sealed class CalendarEventService(DoItDbContext dbContext) : ICalendarEve
         calendarEvent.TimeZoneId = TimeZoneHelper.Normalize(request.TimeZoneId);
         calendarEvent.IsCancelled = request.IsCancelled;
         calendarEvent.UpdatedAt = now;
-        dbContext.CalendarEventReminders.RemoveRange(calendarEvent.Reminders);
-        calendarEvent.Reminders.Clear();
+
+        await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
+        await dbContext.CalendarEventReminders
+            .Where(reminder => reminder.CalendarEventId == eventId)
+            .ExecuteDeleteAsync(cancellationToken);
+
         AddReminders(calendarEvent, reminders, now);
+        dbContext.CalendarEventReminders.AddRange(calendarEvent.Reminders);
         await dbContext.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
         return await GetAsync(userId, eventId, cancellationToken);
     }
 
