@@ -9,6 +9,7 @@ builder.Services.AddDoItPersistence(builder.Configuration);
 builder.Services.AddDoItAuth(builder.Configuration);
 builder.Services.AddDoItCors(builder.Configuration);
 builder.Services.AddDoItRateLimiting();
+builder.Services.AddDoItNotifications();
 builder.Services.AddControllers();
 builder.Services.AddOpenApi();
 

@@ -1,6 +1,7 @@
 using System.Text;
 using DoIt.Api.Application.Interfaces;
 using DoIt.Api.Application.Services;
+using DoIt.Api.Background;
 using DoIt.Api.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
@@ -20,6 +21,7 @@ public static class ServiceCollectionExtensions
         services.Configure<CorsSettings>(configuration.GetSection(CorsSettings.SectionName));
         services.Configure<DoItSettings>(configuration.GetSection(DoItSettings.SectionName));
         services.Configure<HouseholdIntegrationSettings>(configuration.GetSection(HouseholdIntegrationSettings.SectionName));
+        services.Configure<WebPushSettings>(configuration.GetSection(WebPushSettings.SectionName));
         return services;
     }
 
@@ -123,7 +125,17 @@ public static class ServiceCollectionExtensions
             options.AddPolicy("household-authorize", context => CreateFixedWindow(context, 10));
             options.AddPolicy("household-token", context => CreateFixedWindow(context, 30));
             options.AddPolicy("household-revoke", context => CreateFixedWindow(context, 30));
+            options.AddPolicy("notifications", context => CreateFixedWindow(context, 30));
         });
+        return services;
+    }
+
+    public static IServiceCollection AddDoItNotifications(this IServiceCollection services)
+    {
+        services.AddScoped<IPushSubscriptionService, PushSubscriptionService>();
+        services.AddScoped<INotificationDispatcher, NotificationDispatcher>();
+        services.AddSingleton<IWebPushSender, WebPushSender>();
+        services.AddHostedService<NotificationWorker>();
         return services;
     }
 
