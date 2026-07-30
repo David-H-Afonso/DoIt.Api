@@ -4,6 +4,7 @@ using DoIt.Api.Middleware;
 
 var builder = WebApplication.CreateBuilder(args);
 
+ApplyWebPushEnvironmentOverrides(builder.Configuration);
 builder.Services.AddDoItConfiguration(builder.Configuration);
 builder.Services.AddDoItPersistence(builder.Configuration);
 builder.Services.AddDoItAuth(builder.Configuration);
@@ -35,5 +36,26 @@ if (!app.Environment.IsEnvironment("Testing"))
 }
 
 await app.RunAsync();
+
+static void ApplyWebPushEnvironmentOverrides(IConfiguration configuration)
+{
+    ApplyEnvironmentOverride(configuration, "WebPush:Enabled", "DOIT_WEBPUSH_ENABLED");
+    ApplyEnvironmentOverride(configuration, "WebPush:PublicKey", "DOIT_WEBPUSH_PUBLIC_KEY");
+    ApplyEnvironmentOverride(configuration, "WebPush:PrivateKey", "DOIT_WEBPUSH_PRIVATE_KEY");
+    ApplyEnvironmentOverride(configuration, "WebPush:Subject", "DOIT_WEBPUSH_SUBJECT");
+    ApplyEnvironmentOverride(configuration, "WebPush:WorkerIntervalSeconds", "DOIT_WEBPUSH_WORKER_INTERVAL_SECONDS");
+    ApplyEnvironmentOverride(configuration, "WebPush:LookbackSeconds", "DOIT_WEBPUSH_LOOKBACK_SECONDS");
+    ApplyEnvironmentOverride(configuration, "WebPush:BatchSize", "DOIT_WEBPUSH_BATCH_SIZE");
+    ApplyEnvironmentOverride(configuration, "WebPush:MaxAttempts", "DOIT_WEBPUSH_MAX_ATTEMPTS");
+}
+
+static void ApplyEnvironmentOverride(IConfiguration configuration, string key, string environmentVariable)
+{
+    var value = Environment.GetEnvironmentVariable(environmentVariable);
+    if (!string.IsNullOrWhiteSpace(value))
+    {
+        configuration[key] = value;
+    }
+}
 
 public partial class Program;
