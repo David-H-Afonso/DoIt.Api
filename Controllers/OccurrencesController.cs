@@ -1,5 +1,6 @@
 using System.Security.Claims;
 using DoIt.Api.Application.Interfaces;
+using DoIt.Api.Contracts.Requests;
 using DoIt.Api.Contracts.Responses;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -16,6 +17,13 @@ public sealed class OccurrencesController(ITaskActionService taskActionService) 
     public async Task<ActionResult<OccurrenceActionResponse>> Complete(Guid id, CancellationToken cancellationToken)
     {
         return Ok(await taskActionService.CompleteAsync(GetUserId(), id, allowAdminOverride: true, cancellationToken));
+    }
+
+    [HttpPost("{id:guid}/complete-retroactive")]
+    [ProducesResponseType<OccurrenceActionResponse>(StatusCodes.Status200OK)]
+    public async Task<ActionResult<OccurrenceActionResponse>> CompleteRetroactively(Guid id, CompleteOccurrenceRetroactivelyRequest request, CancellationToken cancellationToken)
+    {
+        return Ok(await taskActionService.CompleteRetroactivelyAsync(GetUserId(), id, request.Date, cancellationToken));
     }
 
     [HttpPost("{id:guid}/complete-early")]

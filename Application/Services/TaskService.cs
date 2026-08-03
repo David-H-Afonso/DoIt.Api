@@ -285,7 +285,8 @@ public sealed class TaskService(DoItDbContext dbContext, IOccurrenceService occu
         var recommended = request?.RecommendedTime;
         var timeZoneId = TimeZoneHelper.Normalize(request?.TimeZoneId);
         var unavailableMode = ParseEnum(request?.UnavailableVisibilityMode, UnavailableVisibilityMode.Dimmed);
-        var extendsUntilNextOccurrence = request?.ExtendsUntilNextOccurrence ?? schedule.ExtendsUntilNextOccurrence;
+        var extendsUntilNextOccurrence = recurrenceType != RecurrenceType.Manual
+            && (request?.ExtendsUntilNextOccurrence ?? schedule.ExtendsUntilNextOccurrence);
 
         ValidateSchedule(recurrenceType, availableFrom, availableUntil, weekday, timesPerWeek, everyNDays, weekOfMonth, interval);
 

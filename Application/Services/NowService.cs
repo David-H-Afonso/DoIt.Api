@@ -49,13 +49,21 @@ public sealed class NowService(DoItDbContext dbContext, IOccurrenceService occur
                 continue;
             }
 
-            var classified = Classify(task, GetCurrentTime(task.Schedule?.TimeZoneId, targetDate));
+            var effectiveDate = occurrenceDate.Value;
+            var currentTime = GetCurrentTime(task.Schedule?.TimeZoneId, targetDate);
+            var classified = Classify(task, currentTime);
+            if (effectiveDate < targetDate
+                && task.Schedule?.RecurrenceType != RecurrenceType.Manual
+                && task.Schedule?.AvailableFromTime is { } availableFrom
+                && currentTime < availableFrom)
+            {
+                classified = new NowItem(task, null!, "overdue");
+            }
             if (classified is null)
             {
                 continue;
             }
 
-            var effectiveDate = occurrenceDate.Value;
             var occurrence = await occurrenceService.GetOrCreateAsync(task, effectiveDate, now, cancellationToken);
             if (effectiveDate < targetDate && occurrence.Status != OccurrenceStatus.Pending)
             {

@@ -18,6 +18,45 @@ public sealed class TaskActionService(
         return ApplyActionAsync(userId, occurrenceId, TaskCompletionAction.Done, allowEarly: false, allowAdminOverride, cancellationToken);
     }
 
+    public async Task<OccurrenceActionResponse> CompleteRetroactivelyAsync(Guid userId, Guid occurrenceId, DateOnly date, CancellationToken cancellationToken)
+    {
+        var occurrence = await GetUserOccurrenceAsync(userId, occurrenceId, allowAdminOverride: true, cancellationToken);
+        var timeZone = TimeZoneHelper.Find(occurrence.TimeZoneId ?? occurrence.Task?.Schedule?.TimeZoneId);
+        var localToday = DateOnly.FromDateTime(TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, timeZone).Date);
+        if (date >= localToday)
+        {
+            throw new ApiException(StatusCodes.Status409Conflict, "retroactive_date_not_past", "A retroactive completion must belong to a past date.");
+        }
+
+        if (date < occurrence.Date)
+        {
+            throw new ApiException(StatusCodes.Status409Conflict, "retroactive_date_before_occurrence", "The completion date cannot be before the occurrence.");
+        }
+
+        var schedule = occurrence.Task?.Schedule;
+        if (schedule?.RecurrenceType == RecurrenceType.TimesPerWeek)
+        {
+            if (date != occurrence.Date)
+            {
+                throw new ApiException(StatusCodes.Status409Conflict, "retroactive_date_not_occurrence", "The completion date does not belong to this occurrence.");
+            }
+        }
+        else if (schedule is not null && RecurrenceRules.GetEffectiveOccurrenceDate(schedule, date) != occurrence.Date)
+        {
+            throw new ApiException(StatusCodes.Status409Conflict, "retroactive_date_not_occurrence", "The completion date does not belong to this occurrence.");
+        }
+
+        var completedAt = GetRetroactiveCompletionAt(schedule, occurrence, date);
+        return await ApplyActionAsync(
+            userId,
+            occurrenceId,
+            TaskCompletionAction.Done,
+            allowEarly: false,
+            allowAdminOverride: true,
+            cancellationToken,
+            completedAt);
+    }
+
     public Task<OccurrenceActionResponse> CompleteEarlyAsync(Guid userId, Guid occurrenceId, CancellationToken cancellationToken)
     {
         return ApplyActionAsync(userId, occurrenceId, TaskCompletionAction.Done, allowEarly: true, allowAdminOverride: true, cancellationToken);
@@ -108,7 +147,8 @@ public sealed class TaskActionService(
         TaskCompletionAction action,
         bool allowEarly,
         bool allowAdminOverride,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        DateTime? completionCreatedAt = null)
     {
         var occurrence = await GetUserOccurrenceAsync(userId, occurrenceId, allowAdminOverride, cancellationToken);
         if (action == TaskCompletionAction.Done && allowEarly)
@@ -132,7 +172,7 @@ public sealed class TaskActionService(
 
         if (action == TaskCompletionAction.Done && occurrence.Task?.AssignmentMode == AssignmentMode.AllAssignees)
         {
-            return await ApplyAllAssigneesDoneAsync(userId, occurrence, cancellationToken);
+            return await ApplyAllAssigneesDoneAsync(userId, occurrence, cancellationToken, completionCreatedAt);
         }
 
         var status = ToStatus(action);
@@ -155,7 +195,7 @@ public sealed class TaskActionService(
             OccurrenceId = occurrence.Id,
             UserId = userId,
             Action = action,
-            CreatedAt = now
+            CreatedAt = completionCreatedAt ?? now
         };
         dbContext.TaskCompletions.Add(completion);
 
@@ -178,7 +218,7 @@ public sealed class TaskActionService(
         return ToResponse(occurrence, xp.Item1, xp.Item2);
     }
 
-    private async Task<OccurrenceActionResponse> ApplyAllAssigneesDoneAsync(Guid userId, TaskOccurrence occurrence, CancellationToken cancellationToken)
+    private async Task<OccurrenceActionResponse> ApplyAllAssigneesDoneAsync(Guid userId, TaskOccurrence occurrence, CancellationToken cancellationToken, DateTime? completionCreatedAt = null)
     {
         var hasActiveDone = await dbContext.TaskCompletions.AnyAsync(completion =>
             completion.OccurrenceId == occurrence.Id &&
@@ -197,7 +237,7 @@ public sealed class TaskActionService(
                 OccurrenceId = occurrence.Id,
                 UserId = userId,
                 Action = TaskCompletionAction.Done,
-                CreatedAt = now
+                CreatedAt = completionCreatedAt ?? now
             };
             dbContext.TaskCompletions.Add(completion);
             await xpService.AwardCompletionAsync(occurrence, completion, cancellationToken);
@@ -268,6 +308,15 @@ public sealed class TaskActionService(
             TaskCompletionAction.NotApplicable => OccurrenceStatus.NotApplicable,
             _ => OccurrenceStatus.Pending
         };
+    }
+
+    private static DateTime GetRetroactiveCompletionAt(TaskSchedule? schedule, TaskOccurrence occurrence, DateOnly date)
+    {
+        var localTime = schedule?.AvailableUntilTime is { } availableUntil
+            ? availableUntil.AddMinutes(-1)
+            : new TimeOnly(23, 59);
+        var localDateTime = date.ToDateTime(localTime, DateTimeKind.Unspecified);
+        return TimeZoneInfo.ConvertTimeToUtc(localDateTime, TimeZoneHelper.Find(occurrence.TimeZoneId ?? schedule?.TimeZoneId));
     }
 
     private static OccurrenceActionResponse ToResponse(TaskOccurrence occurrence, int xpEarned = 0, UserXpResponse? userXp = null)

@@ -1,4 +1,5 @@
 using DoIt.Api.Application.Interfaces;
+using DoIt.Api.Common;
 using DoIt.Api.Contracts.Responses;
 using DoIt.Api.Domain.Entities;
 using DoIt.Api.Domain.Enums;
@@ -31,36 +32,67 @@ public sealed class ReviewService(DoItDbContext dbContext, IOccurrenceService oc
 
         var visibleTasks = tasks.Where(task => CanSee(task, userId, isAdmin)).ToList();
         var visible = occurrences.Where(occurrence => occurrence.Task != null && CanSee(occurrence.Task, userId, isAdmin)).ToList();
+        var reviewOccurrences = visible.Where(occurrence => occurrence.Date == date).ToList();
+        foreach (var task in visibleTasks)
+        {
+            var effectiveDate = GetReviewOccurrenceDate(task, date);
+            if (effectiveDate is null)
+            {
+                continue;
+            }
+
+            var occurrence = visible.FirstOrDefault(candidate => candidate.TaskId == task.Id && candidate.Date == effectiveDate.Value)
+                ?? await occurrenceService.GetOrCreateAsync(task, effectiveDate.Value, DateTime.UtcNow, cancellationToken);
+            occurrence.Task ??= task;
+            if (visible.All(candidate => candidate.Id != occurrence.Id))
+            {
+                visible.Add(occurrence);
+            }
+
+            var activeCompletion = ActiveCompletion(occurrence);
+            var wasActionedOnDate = activeCompletion is not null
+                && IsDate(activeCompletion.CreatedAt, date, occurrence.TimeZoneId ?? task.Schedule?.TimeZoneId);
+            var isCarriedPending = effectiveDate.Value < date && occurrence.Status == OccurrenceStatus.Pending;
+            if ((effectiveDate.Value == date || isCarriedPending || wasActionedOnDate)
+                && reviewOccurrences.All(candidate => candidate.Id != occurrence.Id))
+            {
+                reviewOccurrences.Add(occurrence);
+            }
+        }
+
         var xpByCompletion = await dbContext.XpEvents
             .Where(xpEvent => xpEvent.UserId == userId && xpEvent.RevertedAt == null)
             .ToDictionaryAsync(xpEvent => xpEvent.CompletionId, xpEvent => xpEvent.Amount, cancellationToken);
 
         var completed = visible
-            .Where(occurrence => ActiveCompletion(occurrence)?.Action == TaskCompletionAction.Done && IsDate(ActiveCompletion(occurrence)!.CreatedAt, date))
+            .Where(occurrence => ActiveCompletion(occurrence)?.Action == TaskCompletionAction.Done
+                && IsDate(ActiveCompletion(occurrence)!.CreatedAt, date, occurrence.TimeZoneId ?? occurrence.Task?.Schedule?.TimeZoneId))
             .Select(occurrence => ToItem(occurrence, xpByCompletion))
             .ToList();
         var notApplicable = visible
-            .Where(occurrence => occurrence.Date == date && ActiveCompletion(occurrence)?.Action == TaskCompletionAction.NotApplicable)
+            .Where(occurrence => ActiveCompletion(occurrence)?.Action == TaskCompletionAction.NotApplicable
+                && IsDate(ActiveCompletion(occurrence)!.CreatedAt, date, occurrence.TimeZoneId ?? occurrence.Task?.Schedule?.TimeZoneId))
             .Select(occurrence => ToItem(occurrence, xpByCompletion))
             .ToList();
         var today = DateOnly.FromDateTime(DateTime.UtcNow);
-        var notDone = visible
-            .Where(occurrence => occurrence.Date == date && IsNotDoneForReview(occurrence, date, today))
+        var notDone = reviewOccurrences
+            .Where(occurrence => IsNotDoneForReview(occurrence, date, today))
             .Select(occurrence => ToItem(occurrence, xpByCompletion))
             .ToList();
-        var futurePending = visible
+        var futurePending = reviewOccurrences
             .Where(occurrence => occurrence.Date == date && date > today && occurrence.Status == OccurrenceStatus.Pending && ActiveCompletion(occurrence) is null)
             .Select(occurrence => ToItem(occurrence, xpByCompletion))
             .ToList();
         var created = new List<ReviewTaskResponse>();
         foreach (var task in visibleTasks.Where(task => IsDate(task.CreatedAt, date) && task.Schedule is not null && RecurrenceRules.AppliesOnDate(task.Schedule, date)))
         {
-            var occurrence = visible.FirstOrDefault(candidate => candidate.TaskId == task.Id && candidate.Date == task.Schedule?.StartDate)
+            var occurrence = reviewOccurrences.FirstOrDefault(candidate => candidate.TaskId == task.Id && candidate.Date == task.Schedule?.StartDate)
+                ?? visible.FirstOrDefault(candidate => candidate.TaskId == task.Id && candidate.Date == date)
                 ?? await occurrenceService.GetOrCreateAsync(task, date, DateTime.UtcNow, cancellationToken);
+            occurrence.Task ??= task;
             created.Add(ToCreatedItem(task, occurrence));
         }
 
-        var reviewOccurrences = visible.Where(occurrence => occurrence.Date == date).ToList();
         var byZone = reviewOccurrences
             .GroupBy(occurrence => new { occurrence.Task!.ZoneId, ZoneName = occurrence.Task.Zone?.Name ?? GeneralZoneName })
             .Select(group => new ReviewZoneResponse(
@@ -114,7 +146,32 @@ public sealed class ReviewService(DoItDbContext dbContext, IOccurrenceService oc
             .FirstOrDefault();
     }
 
-    private static bool IsDate(DateTime value, DateOnly date) => DateOnly.FromDateTime(value) == date;
+    private static bool IsDate(DateTime value, DateOnly date, string? timeZoneId = null)
+    {
+        var utcValue = DateTime.SpecifyKind(value, DateTimeKind.Utc);
+        return DateOnly.FromDateTime(TimeZoneInfo.ConvertTimeFromUtc(utcValue, TimeZoneHelper.Find(timeZoneId)).Date) == date;
+    }
+
+    private static DateOnly? GetReviewOccurrenceDate(DoItTask task, DateOnly date)
+    {
+        var schedule = task.Schedule;
+        if (schedule is null || DateOnly.FromDateTime(task.CreatedAt) > date)
+        {
+            return null;
+        }
+
+        if (schedule.RecurrenceType == RecurrenceType.Manual)
+        {
+            return schedule.StartDate == date ? date : null;
+        }
+
+        if (schedule.RecurrenceType == RecurrenceType.TimesPerWeek)
+        {
+            return null;
+        }
+
+        return RecurrenceRules.GetEffectiveOccurrenceDate(schedule, date);
+    }
 
     private static bool IsNotDoneForReview(TaskOccurrence occurrence, DateOnly date, DateOnly today)
     {

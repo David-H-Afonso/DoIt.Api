@@ -5,6 +5,7 @@ namespace DoIt.Api.Application.Interfaces;
 public interface ITaskActionService
 {
     Task<OccurrenceActionResponse> CompleteAsync(Guid userId, Guid occurrenceId, bool allowAdminOverride, CancellationToken cancellationToken);
+    Task<OccurrenceActionResponse> CompleteRetroactivelyAsync(Guid userId, Guid occurrenceId, DateOnly date, CancellationToken cancellationToken);
     Task<OccurrenceActionResponse> CompleteEarlyAsync(Guid userId, Guid occurrenceId, CancellationToken cancellationToken);
     Task<OccurrenceActionResponse> MissAsync(Guid userId, Guid occurrenceId, CancellationToken cancellationToken);
     Task<OccurrenceActionResponse> NotApplicableAsync(Guid userId, Guid occurrenceId, CancellationToken cancellationToken);
