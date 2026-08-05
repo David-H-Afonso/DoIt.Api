@@ -150,7 +150,9 @@ public sealed class TaskNotificationService(
             .ToListAsync(cancellationToken);
         var recipientIds = task.Scope == TaskScope.House
             ? activeUserIds.Where(userId => userId != completion.UserId).ToList()
-            : activeUserIds.Contains(task.CreatedByUserId) ? [task.CreatedByUserId] : [];
+            : activeUserIds.Contains(task.CreatedByUserId) && task.CreatedByUserId != completion.UserId
+                ? [task.CreatedByUserId]
+                : [];
         if (recipientIds.Count == 0)
         {
             return;
@@ -630,9 +632,14 @@ public sealed class TaskNotificationService(
 
     private static bool IsCompletedRecipient(DoItTask task, Guid actorUserId, Guid userId)
     {
+        if (actorUserId == userId)
+        {
+            return false;
+        }
+
         if (task.Scope == TaskScope.House)
         {
-            return actorUserId != userId;
+            return true;
         }
 
         return task.CreatedByUserId == userId;
