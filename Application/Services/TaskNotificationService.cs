@@ -148,11 +148,7 @@ public sealed class TaskNotificationService(
             .Where(user => user.IsActive)
             .Select(user => user.Id)
             .ToListAsync(cancellationToken);
-        var recipientIds = task.Scope == TaskScope.House
-            ? activeUserIds.Where(userId => userId != completion.UserId).ToList()
-            : activeUserIds.Contains(task.CreatedByUserId) && task.CreatedByUserId != completion.UserId
-                ? [task.CreatedByUserId]
-                : [];
+        var recipientIds = ResolveCompletionRecipients(task, activeUserIds, completion.UserId);
         if (recipientIds.Count == 0)
         {
             return;
@@ -630,19 +626,39 @@ public sealed class TaskNotificationService(
             || task.Assignments.Any(assignment => assignment.UserId == userId);
     }
 
+    private static IReadOnlyList<Guid> ResolveCompletionRecipients(
+        DoItTask task,
+        IReadOnlyCollection<Guid> activeUserIds,
+        Guid actorUserId)
+    {
+        if (task.Scope != TaskScope.House)
+        {
+            return [];
+        }
+
+        if (task.AssignmentMode == AssignmentMode.Anyone || task.Assignments.Count == 0)
+        {
+            return activeUserIds.Where(userId => userId != actorUserId).ToList();
+        }
+
+        var active = activeUserIds.ToHashSet();
+        return task.Assignments
+            .Select(assignment => assignment.UserId)
+            .Where(userId => userId != actorUserId && active.Contains(userId))
+            .Distinct()
+            .ToList();
+    }
+
     private static bool IsCompletedRecipient(DoItTask task, Guid actorUserId, Guid userId)
     {
-        if (actorUserId == userId)
+        if (task.Scope != TaskScope.House || actorUserId == userId)
         {
             return false;
         }
 
-        if (task.Scope == TaskScope.House)
-        {
-            return true;
-        }
-
-        return task.CreatedByUserId == userId;
+        return task.AssignmentMode == AssignmentMode.Anyone
+            || task.Assignments.Count == 0
+            || task.Assignments.Any(assignment => assignment.UserId == userId);
     }
 
     private async Task<bool> IsActiveUserAsync(Guid userId, CancellationToken cancellationToken)
