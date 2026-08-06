@@ -163,6 +163,7 @@ public sealed class BackupService(DoItDbContext dbContext, ILogger<BackupService
         var occurrences = await dbContext.TaskOccurrences.Where(occurrence => taskIds.Contains(occurrence.TaskId)).OrderBy(occurrence => occurrence.Date).ToListAsync(cancellationToken);
         var occurrenceIds = occurrences.Select(occurrence => occurrence.Id).ToHashSet();
         var completions = await dbContext.TaskCompletions.Where(completion => occurrenceIds.Contains(completion.OccurrenceId) && completion.UserId == user.Id).OrderBy(completion => completion.CreatedAt).ToListAsync(cancellationToken);
+        var snoozes = await dbContext.TaskOccurrenceSnoozes.Where(snooze => occurrenceIds.Contains(snooze.OccurrenceId) && snooze.UserId == user.Id).OrderBy(snooze => snooze.CreatedAt).ToListAsync(cancellationToken);
         var xp = await dbContext.UserXp.FirstOrDefaultAsync(candidate => candidate.UserId == user.Id, cancellationToken);
         var xpEvents = await dbContext.XpEvents.Where(xpEvent => xpEvent.UserId == user.Id).OrderBy(xpEvent => xpEvent.CreatedAt).ToListAsync(cancellationToken);
         var theme = await dbContext.ThemePreferences.FirstOrDefaultAsync(candidate => candidate.UserId == user.Id, cancellationToken);
@@ -219,6 +220,7 @@ public sealed class BackupService(DoItDbContext dbContext, ILogger<BackupService
             }),
             occurrences = occurrences.Select(occurrence => new { occurrence.Id, occurrence.TaskId, occurrence.Date, occurrence.TimeZoneId, Status = occurrence.Status.ToString(), occurrence.AvailableFromAt, occurrence.AvailableUntilAt, occurrence.RecommendedAt, occurrence.CreatedAt, occurrence.UpdatedAt }),
             completions = completions.Select(completion => new { completion.Id, completion.OccurrenceId, completion.UserId, Action = completion.Action.ToString(), completion.Notes, completion.CreatedAt, completion.RevertedAt }),
+            snoozes = snoozes.Select(snooze => new { snooze.Id, snooze.OccurrenceId, snooze.UserId, snooze.UntilAtUtc, snooze.CreatedAt, snooze.UpdatedAt }),
             xp = xp is null ? null : new { xp.Id, xp.UserId, xp.TotalXp, xp.WeeklyXp, xp.CurrentLevel, xp.UpdatedAt },
             xpEvents = xpEvents.Select(xpEvent => new { xpEvent.Id, xpEvent.UserId, xpEvent.OccurrenceId, xpEvent.TaskId, xpEvent.CompletionId, xpEvent.Amount, xpEvent.Reason, xpEvent.Complexity, xpEvent.Importance, xpEvent.FormulaVersion, xpEvent.CreatedAt, xpEvent.RevertedAt }),
             theme = theme is null ? null : new { theme.Id, theme.UserId, theme.ThemeMode, theme.PrimaryColor, theme.AccentColor, theme.BackgroundColor, theme.SurfaceColor, theme.TextColor, theme.BackgroundImagePath, theme.BackgroundOverlayColor, theme.BackgroundOverlayOpacity, theme.CreatedAt, theme.UpdatedAt },

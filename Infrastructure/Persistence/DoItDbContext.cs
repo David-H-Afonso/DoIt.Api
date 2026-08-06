@@ -12,6 +12,7 @@ public sealed class DoItDbContext(DbContextOptions<DoItDbContext> options) : DbC
     public DbSet<TaskSchedule> TaskSchedules => Set<TaskSchedule>();
     public DbSet<TaskOccurrence> TaskOccurrences => Set<TaskOccurrence>();
     public DbSet<TaskCompletion> TaskCompletions => Set<TaskCompletion>();
+    public DbSet<TaskOccurrenceSnooze> TaskOccurrenceSnoozes => Set<TaskOccurrenceSnooze>();
     public DbSet<TaskAssignment> TaskAssignments => Set<TaskAssignment>();
     public DbSet<UserXp> UserXp => Set<UserXp>();
     public DbSet<XpEvent> XpEvents => Set<XpEvent>();

@@ -30,8 +30,11 @@ public sealed class NowService(DoItDbContext dbContext, IOccurrenceService occur
             .ToListAsync(cancellationToken);
 
         var visibleTasks = tasks.Where(task => MatchesScope(task, normalizedScope, userId, allowAdminOverride && user.Role == UserRole.Admin)).ToList();
-        var visibleItems = new List<NowItem>();
         var now = DateTime.UtcNow;
+        var activeSnoozes = await dbContext.TaskOccurrenceSnoozes
+            .Where(snooze => snooze.UserId == userId && snooze.UntilAtUtc > now)
+            .ToDictionaryAsync(snooze => snooze.OccurrenceId, cancellationToken);
+        var visibleItems = new List<NowItem>();
         foreach (var task in visibleTasks)
         {
             if (task.Schedule?.RecurrenceType == RecurrenceType.TimesPerWeek && await WeeklyTargetReachedAsync(task, targetDate, cancellationToken))
@@ -70,6 +73,21 @@ public sealed class NowService(DoItDbContext dbContext, IOccurrenceService occur
                 continue;
             }
 
+            activeSnoozes.TryGetValue(occurrence.Id, out var snooze);
+            if (snooze is not null)
+            {
+                var snoozeDate = DateOnly.FromDateTime(TimeZoneInfo.ConvertTimeFromUtc(snooze.UntilAtUtc, TimeZoneHelper.Find(occurrence.TimeZoneId ?? task.Schedule?.TimeZoneId)).Date);
+                if (snoozeDate > targetDate)
+                {
+                    continue;
+                }
+
+                if (snoozeDate == targetDate)
+                {
+                    classified = new NowItem(task, occurrence, "unavailable", snooze.UntilAtUtc);
+                }
+            }
+
             if (normalizedScope == "me" && task.AssignmentMode == AssignmentMode.AllAssignees && await UserAlreadyCompletedAsync(userId, occurrence.Id, cancellationToken))
             {
                 continue;
@@ -87,7 +105,7 @@ public sealed class NowService(DoItDbContext dbContext, IOccurrenceService occur
 
         var upcomingToday = SortTasks(visibleItems
             .Where(item => item.Status == "unavailable" && item.Occurrence.Status == OccurrenceStatus.Pending)
-            .Select(item => ToTaskResponse(new NowItem(item.Task, item.Occurrence, "upcoming"))));
+            .Select(item => ToTaskResponse(item with { Status = "upcoming" })));
         return new NowResponse(targetDate, normalizedScope, BuildProgress(visibleItems.Select(item => item.Occurrence)), zones, upcomingToday);
     }
 
@@ -149,7 +167,9 @@ public sealed class NowService(DoItDbContext dbContext, IOccurrenceService occur
             schedule?.AvailableUntilTime,
             schedule?.RecommendedTime,
             item.Occurrence.TimeZoneId ?? schedule?.TimeZoneId ?? "UTC",
-            schedule?.RecurrenceType.ToString() ?? RecurrenceType.Manual.ToString());
+            schedule?.RecurrenceType.ToString() ?? RecurrenceType.Manual.ToString(),
+            item.SnoozedUntilUtc is null ? null : DateTime.SpecifyKind(item.SnoozedUntilUtc.Value, DateTimeKind.Utc));
+            
     }
 
     private static NowProgressResponse BuildProgress(IEnumerable<TaskOccurrence> occurrences)
@@ -261,5 +281,5 @@ public sealed class NowService(DoItDbContext dbContext, IOccurrenceService occur
                 : "me";
     }
 
-    private sealed record NowItem(DoItTask Task, TaskOccurrence Occurrence, string Status);
+    private sealed record NowItem(DoItTask Task, TaskOccurrence Occurrence, string Status, DateTime? SnoozedUntilUtc = null);
 }

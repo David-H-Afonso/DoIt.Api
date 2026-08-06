@@ -9,5 +9,7 @@ public interface ITaskActionService
     Task<OccurrenceActionResponse> CompleteEarlyAsync(Guid userId, Guid occurrenceId, CancellationToken cancellationToken);
     Task<OccurrenceActionResponse> MissAsync(Guid userId, Guid occurrenceId, CancellationToken cancellationToken);
     Task<OccurrenceActionResponse> NotApplicableAsync(Guid userId, Guid occurrenceId, CancellationToken cancellationToken);
+    Task<OccurrenceSnoozeResponse> SnoozeAsync(Guid userId, Guid occurrenceId, string duration, CancellationToken cancellationToken);
+    Task CancelSnoozeAsync(Guid userId, Guid occurrenceId, CancellationToken cancellationToken);
     Task<OccurrenceActionResponse> UndoAsync(Guid userId, Guid occurrenceId, bool allowAdminOverride, CancellationToken cancellationToken);
 }

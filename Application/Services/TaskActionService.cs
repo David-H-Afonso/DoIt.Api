@@ -72,6 +72,54 @@ public sealed class TaskActionService(
         return ApplyActionAsync(userId, occurrenceId, TaskCompletionAction.NotApplicable, allowEarly: false, allowAdminOverride: true, cancellationToken);
     }
 
+    public async Task<OccurrenceSnoozeResponse> SnoozeAsync(Guid userId, Guid occurrenceId, string duration, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(duration))
+        {
+            throw new ApiException(StatusCodes.Status400BadRequest, "invalid_snooze_duration", "The snooze duration is invalid.");
+        }
+
+        var occurrence = await GetUserOccurrenceAsync(userId, occurrenceId, allowAdminOverride: true, cancellationToken);
+        if (occurrence.Status != OccurrenceStatus.Pending)
+        {
+            throw new ApiException(StatusCodes.Status409Conflict, "occurrence_not_pending", "Only a pending occurrence can be snoozed.");
+        }
+
+        var now = DateTime.UtcNow;
+        var untilAtUtc = GetSnoozeUntilUtc(occurrence, duration, now);
+        var snooze = await dbContext.TaskOccurrenceSnoozes
+            .FirstOrDefaultAsync(candidate => candidate.OccurrenceId == occurrenceId && candidate.UserId == userId, cancellationToken);
+        if (snooze is null)
+        {
+            snooze = new TaskOccurrenceSnooze
+            {
+                Id = Guid.NewGuid(),
+                OccurrenceId = occurrenceId,
+                UserId = userId,
+                CreatedAt = now
+            };
+            dbContext.TaskOccurrenceSnoozes.Add(snooze);
+        }
+
+        snooze.UntilAtUtc = untilAtUtc;
+        snooze.UpdatedAt = now;
+        await dbContext.SaveChangesAsync(cancellationToken);
+
+        return new OccurrenceSnoozeResponse(occurrence.Id, occurrence.TaskId, occurrence.Date, untilAtUtc);
+    }
+
+    public async Task CancelSnoozeAsync(Guid userId, Guid occurrenceId, CancellationToken cancellationToken)
+    {
+        var occurrence = await GetUserOccurrenceAsync(userId, occurrenceId, allowAdminOverride: true, cancellationToken);
+        var snooze = await dbContext.TaskOccurrenceSnoozes
+            .FirstOrDefaultAsync(candidate => candidate.OccurrenceId == occurrence.Id && candidate.UserId == userId, cancellationToken);
+        if (snooze is not null)
+        {
+            dbContext.TaskOccurrenceSnoozes.Remove(snooze);
+            await dbContext.SaveChangesAsync(cancellationToken);
+        }
+    }
+
     public async Task<OccurrenceActionResponse> UndoAsync(Guid userId, Guid occurrenceId, bool allowAdminOverride, CancellationToken cancellationToken)
     {
         var occurrence = await GetUserOccurrenceAsync(userId, occurrenceId, allowAdminOverride, cancellationToken);
@@ -151,6 +199,10 @@ public sealed class TaskActionService(
         DateTime? completionCreatedAt = null)
     {
         var occurrence = await GetUserOccurrenceAsync(userId, occurrenceId, allowAdminOverride, cancellationToken);
+        if (await HasActiveSnoozeAsync(userId, occurrenceId, cancellationToken))
+        {
+            throw new ApiException(StatusCodes.Status409Conflict, "occurrence_snoozed", "Occurrence is snoozed until later.");
+        }
         if (action == TaskCompletionAction.Done && allowEarly)
         {
             var localToday = DateOnly.FromDateTime(TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, TimeZoneHelper.Find(occurrence.TimeZoneId ?? occurrence.Task?.Schedule?.TimeZoneId)).Date);
@@ -323,6 +375,37 @@ public sealed class TaskActionService(
             : new TimeOnly(23, 59);
         var localDateTime = date.ToDateTime(localTime, DateTimeKind.Unspecified);
         return TimeZoneInfo.ConvertTimeToUtc(localDateTime, TimeZoneHelper.Find(occurrence.TimeZoneId ?? schedule?.TimeZoneId));
+    }
+
+    private static DateTime GetSnoozeUntilUtc(TaskOccurrence occurrence, string duration, DateTime now)
+    {
+        var normalizedDuration = duration.Trim().ToLowerInvariant();
+        return normalizedDuration switch
+        {
+            "1h" => now.AddHours(1),
+            "6h" => now.AddHours(6),
+            "12h" => now.AddHours(12),
+            "24h" => now.AddHours(24),
+            "tomorrow" => GetTomorrowStartUtc(occurrence, now),
+            _ => throw new ApiException(StatusCodes.Status400BadRequest, "invalid_snooze_duration", "The snooze duration is invalid.")
+        };
+    }
+
+    private static DateTime GetTomorrowStartUtc(TaskOccurrence occurrence, DateTime now)
+    {
+        var timeZone = TimeZoneHelper.Find(occurrence.TimeZoneId ?? occurrence.Task?.Schedule?.TimeZoneId);
+        var localNow = TimeZoneInfo.ConvertTimeFromUtc(now, timeZone);
+        var tomorrow = DateOnly.FromDateTime(localNow.Date).AddDays(1);
+        return TimeZoneHelper.ToUtc(tomorrow, TimeOnly.MinValue, occurrence.TimeZoneId ?? occurrence.Task?.Schedule?.TimeZoneId);
+    }
+
+    private async Task<bool> HasActiveSnoozeAsync(Guid userId, Guid occurrenceId, CancellationToken cancellationToken)
+    {
+        return await dbContext.TaskOccurrenceSnoozes.AnyAsync(snooze =>
+            snooze.UserId == userId
+            && snooze.OccurrenceId == occurrenceId
+            && snooze.UntilAtUtc > DateTime.UtcNow,
+            cancellationToken);
     }
 
     private static OccurrenceActionResponse ToResponse(TaskOccurrence occurrence, int xpEarned = 0, UserXpResponse? userXp = null)

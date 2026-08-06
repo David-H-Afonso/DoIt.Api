@@ -20,4 +20,5 @@ public sealed record NowTaskResponse(
     TimeOnly? AvailableUntilTime,
     TimeOnly? RecommendedTime,
     string TimeZoneId,
-    string RecurrenceType);
+    string RecurrenceType,
+    DateTime? SnoozedUntilUtc = null);

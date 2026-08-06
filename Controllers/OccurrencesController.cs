@@ -47,6 +47,21 @@ public sealed class OccurrencesController(ITaskActionService taskActionService) 
         return Ok(await taskActionService.NotApplicableAsync(GetUserId(), id, cancellationToken));
     }
 
+    [HttpPost("{id:guid}/snooze")]
+    [ProducesResponseType<OccurrenceSnoozeResponse>(StatusCodes.Status200OK)]
+    public async Task<ActionResult<OccurrenceSnoozeResponse>> Snooze(Guid id, SnoozeOccurrenceRequest request, CancellationToken cancellationToken)
+    {
+        return Ok(await taskActionService.SnoozeAsync(GetUserId(), id, request.Duration, cancellationToken));
+    }
+
+    [HttpDelete("{id:guid}/snooze")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    public async Task<IActionResult> CancelSnooze(Guid id, CancellationToken cancellationToken)
+    {
+        await taskActionService.CancelSnoozeAsync(GetUserId(), id, cancellationToken);
+        return NoContent();
+    }
+
     [HttpPost("{id:guid}/undo")]
     [ProducesResponseType<OccurrenceActionResponse>(StatusCodes.Status200OK)]
     public async Task<ActionResult<OccurrenceActionResponse>> Undo(Guid id, CancellationToken cancellationToken)
