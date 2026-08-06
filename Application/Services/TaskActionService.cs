@@ -163,8 +163,14 @@ public sealed class TaskActionService(
 
         if (action == TaskCompletionAction.Done && !allowEarly)
         {
-            var localToday = DateOnly.FromDateTime(TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, TimeZoneHelper.Find(occurrence.TimeZoneId ?? occurrence.Task?.Schedule?.TimeZoneId)).Date);
-            if (occurrence.Date > localToday || occurrence.AvailableFromAt is not null && DateTime.UtcNow < occurrence.AvailableFromAt)
+            var schedule = occurrence.Task?.Schedule;
+            var timeZone = TimeZoneHelper.Find(schedule?.TimeZoneId ?? occurrence.TimeZoneId);
+            var currentUtc = DateTime.UtcNow;
+            var localToday = DateOnly.FromDateTime(TimeZoneInfo.ConvertTimeFromUtc(currentUtc, timeZone).Date);
+            DateTime? availableFromAt = schedule?.AvailableFromTime is { } availableFrom
+                ? TimeZoneHelper.ToUtc(occurrence.Date, availableFrom, schedule.TimeZoneId)
+                : null;
+            if (occurrence.Date > localToday || availableFromAt is not null && currentUtc < availableFromAt)
             {
                 throw new ApiException(StatusCodes.Status409Conflict, "occurrence_unavailable", "Occurrence is not available yet.");
             }
