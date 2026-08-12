@@ -4,6 +4,14 @@ using DoIt.Api.Middleware;
 
 var builder = WebApplication.CreateBuilder(args);
 
+builder.Logging.ClearProviders();
+builder.Logging.AddJsonConsole(options =>
+{
+    options.IncludeScopes = true;
+    options.TimestampFormat = "yyyy-MM-ddTHH:mm:ss.fffZ";
+    options.UseUtcTimestamp = true;
+});
+
 ApplyWebPushEnvironmentOverrides(builder.Configuration);
 builder.Services.AddDoItConfiguration(builder.Configuration);
 builder.Services.AddDoItPersistence(builder.Configuration);

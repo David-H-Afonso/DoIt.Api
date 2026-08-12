@@ -37,7 +37,7 @@ public sealed class TasksController(ITaskService taskService) : ControllerBase
     [ProducesResponseType<TaskResponse>(StatusCodes.Status200OK)]
     public async Task<ActionResult<TaskResponse>> Update(Guid id, UpdateTaskRequest request, CancellationToken cancellationToken)
     {
-        return Ok(await taskService.UpdateAsync(GetUserId(), id, request, cancellationToken));
+        return Ok(await taskService.UpdateAsync(GetUserId(), User.IsInRole("Admin"), id, request, cancellationToken));
     }
 
     [HttpDelete("{id:guid}")]

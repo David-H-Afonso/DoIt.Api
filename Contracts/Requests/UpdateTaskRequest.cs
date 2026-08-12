@@ -11,4 +11,5 @@ public sealed record UpdateTaskRequest(
     string? Obligation,
     TaskScheduleRequest? Schedule,
     string? AssignmentMode = null,
-    IReadOnlyList<Guid>? AssigneeIds = null);
+    IReadOnlyList<Guid>? AssigneeIds = null,
+    string? PersonalOwner = null);

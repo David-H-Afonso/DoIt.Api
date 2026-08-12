@@ -10,7 +10,10 @@ using Microsoft.EntityFrameworkCore;
 
 namespace DoIt.Api.Application.Services;
 
-public sealed class TaskService(DoItDbContext dbContext, IOccurrenceService occurrenceService) : ITaskService
+public sealed class TaskService(
+    DoItDbContext dbContext,
+    IOccurrenceService occurrenceService,
+    ILogger<TaskService> logger) : ITaskService
 {
     public async Task<IReadOnlyList<TaskResponse>> ListAsync(Guid userId, CancellationToken cancellationToken)
     {
@@ -51,7 +54,7 @@ public sealed class TaskService(DoItDbContext dbContext, IOccurrenceService occu
             throw new ApiException(StatusCodes.Status409Conflict, "task_exists", "A task with this title already exists.");
         }
 
-        await ValidateZoneAsync(userId, request.ZoneId, cancellationToken);
+        await ValidateZoneAsync(userId, false, request.ZoneId, cancellationToken);
 
         var now = DateTime.UtcNow;
         var scope = ParseEnum<TaskScope>(request.Scope, TaskScope.Personal);
@@ -81,27 +84,62 @@ public sealed class TaskService(DoItDbContext dbContext, IOccurrenceService occu
         return await GetAsync(userId, task.Id, cancellationToken);
     }
 
-    public async Task<TaskResponse> UpdateAsync(Guid userId, Guid taskId, UpdateTaskRequest request, CancellationToken cancellationToken)
+    public async Task<TaskResponse> UpdateAsync(Guid userId, bool isAdmin, Guid taskId, UpdateTaskRequest request, CancellationToken cancellationToken)
     {
         ValidateTitle(request.Title);
-        await ValidateZoneAsync(userId, request.ZoneId, cancellationToken);
+        for (var attempt = 0; attempt < 2; attempt++)
+        {
+            try
+            {
+                return await UpdateCoreAsync(userId, isAdmin, taskId, request, cancellationToken);
+            }
+            catch (DbUpdateConcurrencyException) when (attempt == 0)
+            {
+                // A second browser tab can update assignments while this request is
+                // saving. Reload the graph once instead of returning a generic 500.
+                dbContext.ChangeTracker.Clear();
+            }
+        }
 
-        var task = await QueryOwnedTasks(userId).FirstOrDefaultAsync(candidate => candidate.Id == taskId, cancellationToken);
+        throw new ApiException(
+            StatusCodes.Status409Conflict,
+            "data_changed",
+            "The task was changed by another request. Reload it and try again.");
+    }
+
+    private async Task<TaskResponse> UpdateCoreAsync(Guid userId, bool isAdmin, Guid taskId, UpdateTaskRequest request, CancellationToken cancellationToken)
+    {
+
+        var task = await QueryEditableTasks(userId, isAdmin).FirstOrDefaultAsync(candidate => candidate.Id == taskId, cancellationToken);
         if (task is null)
         {
             throw new ApiException(StatusCodes.Status404NotFound, "task_not_found", "Task not found.");
         }
 
+        await ValidateZoneAsync(userId, isAdmin, request.ZoneId, cancellationToken);
+
         var now = DateTime.UtcNow;
+        var previousCreatorUserId = task.CreatedByUserId;
         task.Title = request.Title.Trim();
         task.Description = NormalizeOptional(request.Description);
         task.ZoneId = request.ZoneId;
-        task.Scope = ParseEnum<TaskScope>(request.Scope, task.Scope);
+        var previousScope = task.Scope;
+        var requestedScope = ParseEnum<TaskScope>(request.Scope, task.Scope);
+        task.Scope = requestedScope;
         task.TaskType = ParseEnum<TaskType>(request.TaskType, task.TaskType);
         task.Importance = ParseEnum<TaskImportance>(request.Importance, task.Importance);
         task.Complexity = ParseEnum<TaskComplexity>(request.Complexity, task.Complexity);
         task.Obligation = ParseEnum<TaskObligation>(request.Obligation, task.Obligation);
         task.AssignmentMode = ResolveAssignmentMode(ParseEnum<AssignmentMode>(request.AssignmentMode, task.AssignmentMode), task.Scope, request.AssigneeIds);
+        if (previousScope == TaskScope.House && requestedScope == TaskScope.Personal)
+        {
+            task.CreatedByUserId = ResolvePersonalOwner(userId, isAdmin, task.CreatedByUserId, request.PersonalOwner);
+            task.AssignmentMode = AssignmentMode.SingleUser;
+        }
+        else if (request.PersonalOwner is not null)
+        {
+            throw new ApiException(StatusCodes.Status400BadRequest, "invalid_personal_owner", "Personal owner can only be selected when converting a House task.");
+        }
         task.UpdatedAt = now;
 
         if (task.Schedule is null)
@@ -113,10 +151,24 @@ public sealed class TaskService(DoItDbContext dbContext, IOccurrenceService occu
             ApplySchedule(task.Schedule, request.Schedule, now);
         }
 
-        await ApplyAssignmentsAsync(task, userId, request.AssigneeIds, now, cancellationToken);
+        await ApplyAssignmentsAsync(task, task.Scope == TaskScope.Personal ? task.CreatedByUserId : userId, request.AssigneeIds, now, cancellationToken);
 
+        logger.LogDebug(
+            "Saving task update. TaskId={TaskId} Entries={Entries}",
+            task.Id,
+            string.Join(",", dbContext.ChangeTracker.Entries().Select(entry => $"{entry.Metadata.ClrType.Name}:{entry.State}")));
         await dbContext.SaveChangesAsync(cancellationToken);
-        return await GetAsync(userId, task.Id, cancellationToken);
+        if (previousScope == TaskScope.House && requestedScope == TaskScope.Personal)
+        {
+            logger.LogInformation(
+                "Task converted from House to Personal. TaskId={TaskId} PreviousCreatorUserId={PreviousCreatorUserId} PersonalOwnerUserId={PersonalOwnerUserId} ChangedByUserId={ChangedByUserId}",
+                task.Id,
+                previousCreatorUserId,
+                task.CreatedByUserId,
+                userId);
+        }
+
+        return await GetAsync(task.CreatedByUserId, task.Id, cancellationToken);
     }
 
     public async Task ArchiveAsync(Guid userId, Guid taskId, CancellationToken cancellationToken)
@@ -164,6 +216,15 @@ public sealed class TaskService(DoItDbContext dbContext, IOccurrenceService occu
             .Include(task => task.Schedule)
             .Include(task => task.Assignments)
             .Where(task => task.CreatedByUserId == userId);
+    }
+
+    private IQueryable<DoItTask> QueryEditableTasks(Guid userId, bool isAdmin)
+    {
+        return dbContext.Tasks
+            .Include(task => task.Zone)
+            .Include(task => task.Schedule)
+            .Include(task => task.Assignments)
+            .Where(task => task.CreatedByUserId == userId || isAdmin && task.Scope == TaskScope.House);
     }
 
     private IQueryable<DoItTask> QueryVisibleTasks(Guid userId)
@@ -248,14 +309,14 @@ public sealed class TaskService(DoItDbContext dbContext, IOccurrenceService occu
         return occurrenceDate == localDate && TimeOnly.FromDateTime(TimeZoneInfo.ConvertTimeFromUtc(now, TimeZoneHelper.Find(schedule.TimeZoneId))) > schedule.AvailableUntilTime;
     }
 
-    private async Task ValidateZoneAsync(Guid userId, Guid? zoneId, CancellationToken cancellationToken)
+    private async Task ValidateZoneAsync(Guid userId, bool isAdmin, Guid? zoneId, CancellationToken cancellationToken)
     {
         if (zoneId is null)
         {
             return;
         }
 
-        var exists = await dbContext.Zones.AnyAsync(zone => zone.Id == zoneId && zone.CreatedByUserId == userId && !zone.IsArchived, cancellationToken);
+        var exists = await dbContext.Zones.AnyAsync(zone => zone.Id == zoneId && (zone.CreatedByUserId == userId || isAdmin) && !zone.IsArchived, cancellationToken);
         if (!exists)
         {
             throw new ApiException(StatusCodes.Status400BadRequest, "invalid_zone", "Zone does not exist.");
@@ -320,16 +381,41 @@ public sealed class TaskService(DoItDbContext dbContext, IOccurrenceService occu
             throw new ApiException(StatusCodes.Status400BadRequest, "invalid_assignee", "One or more assignees do not exist.");
         }
 
+        if (task.Scope == TaskScope.Personal)
+        {
+            foreach (var assignment in task.Assignments.ToList())
+            {
+                dbContext.Entry(assignment).State = EntityState.Detached;
+            }
+
+            task.Assignments.Clear();
+            await dbContext.TaskAssignments
+                .Where(assignment => assignment.TaskId == task.Id)
+                .ExecuteDeleteAsync(cancellationToken);
+
+            dbContext.TaskAssignments.Add(new TaskAssignment
+            {
+                Id = Guid.NewGuid(),
+                TaskId = task.Id,
+                UserId = creatorUserId,
+                Role = TaskAssignmentRole.Primary,
+                CreatedAt = now
+            });
+            return;
+        }
+
         var desiredIds = ids.ToHashSet();
         foreach (var assignment in task.Assignments.Where(assignment => !desiredIds.Contains(assignment.UserId)).ToList())
         {
             dbContext.TaskAssignments.Remove(assignment);
+            task.Assignments.Remove(assignment);
         }
 
         // Removed assignments remain tracked until SaveChanges; exclude them so a scope
         // change can recreate the creator assignment instead of updating a deleted row.
         var existingByUserId = task.Assignments
-            .Where(assignment => desiredIds.Contains(assignment.UserId))
+            .Where(assignment => desiredIds.Contains(assignment.UserId)
+                && dbContext.Entry(assignment).State != EntityState.Deleted)
             .ToDictionary(assignment => assignment.UserId);
         for (var index = 0; index < ids.Count; index++)
         {
@@ -379,6 +465,21 @@ public sealed class TaskService(DoItDbContext dbContext, IOccurrenceService occu
         }
 
         return ids;
+    }
+
+    private static Guid ResolvePersonalOwner(Guid adminUserId, bool isAdmin, Guid creatorUserId, string? requestedOwner)
+    {
+        if (string.IsNullOrWhiteSpace(requestedOwner) || requestedOwner.Equals("creator", StringComparison.OrdinalIgnoreCase))
+        {
+            return creatorUserId;
+        }
+
+        if (requestedOwner.Equals("admin", StringComparison.OrdinalIgnoreCase) && isAdmin)
+        {
+            return adminUserId;
+        }
+
+        throw new ApiException(StatusCodes.Status400BadRequest, "invalid_personal_owner", "Choose the task creator or yourself as the personal owner.");
     }
 
     private static void ValidateSchedule(RecurrenceType recurrenceType, TimeOnly? availableFrom, TimeOnly? availableUntil, DayOfWeek? weekday, int? timesPerWeek, int? everyNDays, int? weekOfMonth, int? interval)
