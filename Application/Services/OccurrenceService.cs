@@ -33,8 +33,27 @@ public sealed class OccurrenceService(DoItDbContext dbContext) : IOccurrenceServ
         };
 
         dbContext.TaskOccurrences.Add(occurrence);
-        await dbContext.SaveChangesAsync(cancellationToken);
-        return occurrence;
+        try
+        {
+            await dbContext.SaveChangesAsync(cancellationToken);
+            return occurrence;
+        }
+        catch (DbUpdateException)
+        {
+            // Another request may have materialized this task/date between our read and
+            // insert. Let the unique index arbitrate and use the existing occurrence.
+            dbContext.Entry(occurrence).State = EntityState.Detached;
+            var existing = await dbContext.TaskOccurrences
+                .Include(candidate => candidate.Completions)
+                .ThenInclude(completion => completion.User)
+                .FirstOrDefaultAsync(candidate => candidate.TaskId == task.Id && candidate.Date == date, cancellationToken);
+            if (existing is not null)
+            {
+                return existing;
+            }
+
+            throw;
+        }
     }
 
     private static DateTime? Combine(DateOnly date, TimeOnly? time, string? timeZoneId) => time is null ? null : TimeZoneHelper.ToUtc(date, time, timeZoneId);

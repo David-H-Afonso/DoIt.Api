@@ -326,7 +326,11 @@ public sealed class TaskService(DoItDbContext dbContext, IOccurrenceService occu
             dbContext.TaskAssignments.Remove(assignment);
         }
 
-        var existingByUserId = task.Assignments.ToDictionary(assignment => assignment.UserId);
+        // Removed assignments remain tracked until SaveChanges; exclude them so a scope
+        // change can recreate the creator assignment instead of updating a deleted row.
+        var existingByUserId = task.Assignments
+            .Where(assignment => desiredIds.Contains(assignment.UserId))
+            .ToDictionary(assignment => assignment.UserId);
         for (var index = 0; index < ids.Count; index++)
         {
             var assignedUserId = ids[index];
