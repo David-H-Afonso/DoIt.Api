@@ -20,4 +20,8 @@ RUN apt-get update \
 COPY --from=build /app/publish .
 
 EXPOSE 8080
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --start-interval=1s --retries=5 \
+    CMD curl -fsS http://localhost:8080/api/health || exit 1
+
 ENTRYPOINT ["dotnet", "DoIt.Api.dll"]
