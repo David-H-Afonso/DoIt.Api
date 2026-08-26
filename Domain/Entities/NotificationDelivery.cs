@@ -9,6 +9,8 @@ public sealed class NotificationDelivery
     public Guid PushSubscriptionId { get; set; }
     public string SourceType { get; set; } = string.Empty;
     public Guid SourceId { get; set; }
+    public Guid? NotificationInboxItemId { get; set; }
+    public string? PushGroupKey { get; set; }
     public string DeduplicationKey { get; set; } = string.Empty;
     public DateTime DueAtUtc { get; set; }
     public NotificationDeliveryStatus Status { get; set; } = NotificationDeliveryStatus.Pending;
@@ -22,4 +24,5 @@ public sealed class NotificationDelivery
 
     public User? User { get; set; }
     public PushSubscription? PushSubscription { get; set; }
+    public NotificationInboxItem? NotificationInboxItem { get; set; }
 }

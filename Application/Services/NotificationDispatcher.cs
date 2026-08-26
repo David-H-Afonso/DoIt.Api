@@ -2,6 +2,7 @@ using System.Text.Json;
 using DoIt.Api.Application.Interfaces;
 using DoIt.Api.Common;
 using DoIt.Api.Configuration;
+using DoIt.Api.Contracts.Responses;
 using DoIt.Api.Domain.Entities;
 using DoIt.Api.Domain.Enums;
 using DoIt.Api.Infrastructure.Persistence;
@@ -14,6 +15,7 @@ public sealed class NotificationDispatcher(
     DoItDbContext dbContext,
     IWebPushSender webPushSender,
     ITaskNotificationService taskNotificationService,
+    INotificationInboxService inboxService,
     IOptions<WebPushSettings> webPushOptions,
     TimeProvider timeProvider,
     ILogger<NotificationDispatcher> logger) : INotificationDispatcher
@@ -26,20 +28,16 @@ public sealed class NotificationDispatcher(
 
     public async Task<int> DispatchAsync(CancellationToken cancellationToken)
     {
-        if (!_settings.Enabled)
-        {
-            return 0;
-        }
-
-        if (!_settings.HasVapidConfiguration)
-        {
-            logger.LogError("Web Push is enabled but WebPush:PublicKey, WebPush:PrivateKey and WebPush:Subject must all be configured. No notifications will be sent.");
-            return 0;
-        }
-
         var now = _timeProvider.GetUtcNow().UtcDateTime;
+        logger.LogDebug("Starting notification dispatch at {NowUtc}.", now);
+        await inboxService.PruneExpiredAsync(now, cancellationToken);
         await EnsureCalendarReminderDeliveriesAsync(now, cancellationToken);
         await taskNotificationService.EnsureScheduledDeliveriesAsync(now, cancellationToken);
+        if (!_settings.Enabled || !_settings.HasVapidConfiguration)
+        {
+            return 0;
+        }
+
         return await ProcessDeliveriesAsync(now, cancellationToken);
     }
 
@@ -56,8 +54,6 @@ public sealed class NotificationDispatcher(
                 && !reminder.CalendarEvent.IsCancelled)
             .ToListAsync(cancellationToken);
 
-        var subscriptionsByUser = new Dictionary<Guid, IReadOnlyList<PushSubscription>>();
-        var newDeliveries = new List<NotificationDelivery>();
         foreach (var reminder in reminders)
         {
             if (reminder.CalendarEvent is null)
@@ -71,62 +67,20 @@ public sealed class NotificationDispatcher(
                 continue;
             }
 
-            if (!subscriptionsByUser.TryGetValue(reminder.CalendarEvent.CreatedByUserId, out var subscriptions))
-            {
-                subscriptions = await dbContext.PushSubscriptions
-                    .AsNoTracking()
-                    .Where(subscription => subscription.UserId == reminder.CalendarEvent.CreatedByUserId && subscription.IsActive)
-                    .ToListAsync(cancellationToken);
-                subscriptionsByUser[reminder.CalendarEvent.CreatedByUserId] = subscriptions;
-            }
-
-            var deduplicationKey = BuildDeduplicationKey(reminder.Id, dueAtUtc);
-            foreach (var subscription in subscriptions)
-            {
-                var exists = await dbContext.NotificationDeliveries.AnyAsync(delivery =>
-                    delivery.PushSubscriptionId == subscription.Id
-                    && delivery.DeduplicationKey == deduplicationKey, cancellationToken);
-                if (exists)
-                {
-                    continue;
-                }
-
-                newDeliveries.Add(new NotificationDelivery
-                {
-                    Id = Guid.NewGuid(),
-                    UserId = reminder.CalendarEvent.CreatedByUserId,
-                    PushSubscriptionId = subscription.Id,
-                    SourceType = CalendarReminderSourceType,
-                    SourceId = reminder.Id,
-                    DeduplicationKey = deduplicationKey,
-                    DueAtUtc = dueAtUtc,
-                    Status = NotificationDeliveryStatus.Pending,
-                    AttemptCount = 0,
-                    CreatedAt = now,
-                    UpdatedAt = now
-                });
-            }
+            await inboxService.CreateAsync(
+                reminder.CalendarEvent.CreatedByUserId,
+                CalendarReminderSourceType,
+                reminder.Id,
+                $"calendar-reminder:{reminder.Id:N}:{dueAtUtc.Ticks}",
+                $"Recordatorio: {reminder.CalendarEvent.Title}",
+                BuildBody(reminder.CalendarEvent),
+                "/calendar",
+                new { sourceType = CalendarReminderSourceType, sourceId = reminder.Id, eventId = reminder.CalendarEvent.Id, dueAtUtc },
+                dueAtUtc,
+                true,
+                cancellationToken);
         }
 
-        if (newDeliveries.Count == 0)
-        {
-            return;
-        }
-
-        dbContext.NotificationDeliveries.AddRange(newDeliveries);
-        try
-        {
-            await dbContext.SaveChangesAsync(cancellationToken);
-        }
-        catch (DbUpdateException exception)
-        {
-            foreach (var delivery in newDeliveries)
-            {
-                dbContext.Entry(delivery).State = EntityState.Detached;
-            }
-
-            logger.LogDebug(exception, "A Web Push delivery was inserted concurrently; the unique deduplication index will keep one delivery.");
-        }
     }
 
     private async Task<int> ProcessDeliveriesAsync(DateTime now, CancellationToken cancellationToken)
@@ -135,7 +89,8 @@ public sealed class NotificationDispatcher(
         var maxAttempts = Math.Max(1, _settings.MaxAttempts);
         var candidateIds = await dbContext.NotificationDeliveries
             .AsNoTracking()
-            .Where(delivery => (delivery.SourceType == CalendarReminderSourceType
+            .Where(delivery => (delivery.NotificationInboxItemId != null
+                    || delivery.SourceType == CalendarReminderSourceType
                     || delivery.SourceType == TaskNotificationService.AvailableFromSourceType
                     || delivery.SourceType == TaskNotificationService.RecommendedSourceType
                     || delivery.SourceType == TaskNotificationService.BeforeAvailableUntilSourceType
@@ -208,6 +163,7 @@ public sealed class NotificationDispatcher(
     {
         var delivery = await dbContext.NotificationDeliveries
             .Include(candidate => candidate.PushSubscription)
+            .Include(candidate => candidate.NotificationInboxItem)
             .FirstOrDefaultAsync(candidate => candidate.Id == deliveryId, cancellationToken);
         if (delivery is null)
         {
@@ -215,7 +171,22 @@ public sealed class NotificationDispatcher(
         }
 
         string? payload;
-        if (delivery.SourceType == CalendarReminderSourceType)
+        if (delivery.NotificationInboxItem is not null)
+        {
+            payload = await BuildInboxPayloadAsync(delivery, cancellationToken);
+            if (payload is null)
+            {
+                await MarkTerminalFailureAsync(delivery, now, maxAttempts, "Inbox notification is no longer available.", cancellationToken);
+                return;
+            }
+
+            if (delivery.PushSubscription is null || !delivery.PushSubscription.IsActive || delivery.PushSubscription.UserId != delivery.UserId)
+            {
+                await MarkTerminalFailureAsync(delivery, now, maxAttempts, "Push subscription is no longer active.", cancellationToken);
+                return;
+            }
+        }
+        else if (delivery.SourceType == CalendarReminderSourceType)
         {
             var reminder = await dbContext.CalendarEventReminders
                 .AsNoTracking()
@@ -306,6 +277,77 @@ public sealed class NotificationDispatcher(
             ? null
             : delivery.UpdatedAt.Add(GetBackoff(delivery.AttemptCount));
         await dbContext.SaveChangesAsync(cancellationToken);
+    }
+
+    private async Task<string?> BuildInboxPayloadAsync(NotificationDelivery delivery, CancellationToken cancellationToken)
+    {
+        var item = delivery.NotificationInboxItem;
+        if (item is null)
+        {
+            return null;
+        }
+
+        var items = string.IsNullOrWhiteSpace(delivery.PushGroupKey)
+                ? [ToInboxResponse(item)]
+            : await inboxService.ListForPushGroupAsync(delivery.UserId, delivery.PushGroupKey, cancellationToken);
+        if (items.Count == 0)
+        {
+            return null;
+        }
+
+        var first = items[0];
+        var groupedData = items.Count == 1 ? first.Data : BuildGroupedData(first, items);
+        var payload = new
+        {
+            title = items.Count == 1 ? first.Title : $"{items.Count} notificaciones",
+            body = items.Count == 1 ? first.Body : string.Join(" · ", items.Select(notification => notification.Title)),
+            url = items.Count == 1 ? first.Url : $"/inbox?groupKey={Uri.EscapeDataString(delivery.PushGroupKey ?? string.Empty)}",
+            tag = delivery.PushGroupKey ?? delivery.DeduplicationKey,
+            data = groupedData
+        };
+        return JsonSerializer.Serialize(payload, JsonOptions);
+    }
+
+    private static NotificationInboxItemResponse ToInboxResponse(NotificationInboxItem item)
+    {
+        object? data = null;
+        if (!string.IsNullOrWhiteSpace(item.DataJson))
+        {
+            try { data = JsonSerializer.Deserialize<JsonElement>(item.DataJson, JsonOptions); }
+            catch (JsonException) { }
+        }
+
+        return new NotificationInboxItemResponse(
+            item.Id,
+            item.SourceType,
+            item.SourceId,
+            item.Title,
+            item.Body,
+            item.Url,
+            data,
+            item.DueAtUtc,
+            item.CreatedAt,
+            item.ReadAtUtc is not null,
+            item.ReadAtUtc);
+    }
+
+    private static object BuildGroupedData(NotificationInboxItemResponse first, IReadOnlyList<NotificationInboxItemResponse> items)
+    {
+        var data = new Dictionary<string, object?>
+        {
+            ["sourceType"] = first.SourceType,
+            ["sourceId"] = first.SourceId,
+            ["notifications"] = items
+        };
+        if (first.Data is JsonElement json && json.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var property in json.EnumerateObject())
+            {
+                data[property.Name] = property.Value;
+            }
+        }
+
+        return data;
     }
 
     private async Task MarkTerminalFailureAsync(

@@ -13,6 +13,7 @@ namespace DoIt.Api.Application.Services;
 public sealed class TaskNotificationService(
     DoItDbContext dbContext,
     IOccurrenceService occurrenceService,
+    INotificationInboxService inboxService,
     IOptions<WebPushSettings> webPushOptions,
     TimeProvider timeProvider,
     ILogger<TaskNotificationService> logger) : ITaskNotificationService
@@ -38,11 +39,6 @@ public sealed class TaskNotificationService(
 
     public async Task EnsureScheduledDeliveriesAsync(DateTime now, CancellationToken cancellationToken)
     {
-        if (!CanQueueNotifications())
-        {
-            return;
-        }
-
         var nowUtc = DateTime.SpecifyKind(now, DateTimeKind.Utc);
         var lookback = TimeSpan.FromSeconds(Math.Max(0, _settings.LookbackSeconds));
         var fromUtc = nowUtc.Subtract(lookback);
@@ -71,12 +67,7 @@ public sealed class TaskNotificationService(
         var subscriptionsByUser = activeSubscriptions
             .GroupBy(subscription => subscription.UserId)
             .ToDictionary(group => group.Key, group => group.ToList());
-        if (subscriptionsByUser.Count == 0)
-        {
-            return;
-        }
-
-        var preferencesByUser = await LoadPreferencesAsync(subscriptionsByUser.Keys, cancellationToken);
+        var preferencesByUser = await LoadPreferencesAsync(activeUserIds, cancellationToken);
         var existingKeys = await LoadExistingTaskDeliveryKeysAsync(
             activeSubscriptions.Select(subscription => subscription.Id),
             cancellationToken);
@@ -100,27 +91,11 @@ public sealed class TaskNotificationService(
 
                 foreach (var recipientId in recipientIds)
                 {
-                    if (!subscriptionsByUser.TryGetValue(recipientId, out var subscriptions))
-                    {
-                        continue;
-                    }
-
                     var preference = preferencesByUser[recipientId];
-                    QueueScheduledDeliveries(
-                        task,
-                        occurrence,
-                        recipientId,
-                        subscriptions,
-                        preference,
-                        fromUtc,
-                        nowUtc,
-                        existingKeys,
-                        newDeliveries);
+                    await QueueScheduledInboxItemsAsync(task, occurrence, recipientId, preference, fromUtc, nowUtc, cancellationToken);
                 }
             }
         }
-
-        await SaveNewDeliveriesAsync(newDeliveries, cancellationToken);
     }
 
     public async Task QueueTaskCompletedAsync(
@@ -128,7 +103,7 @@ public sealed class TaskNotificationService(
         TaskCompletion completion,
         CancellationToken cancellationToken)
     {
-        if (!CanQueueNotifications() || occurrence.Status != OccurrenceStatus.Done)
+        if (occurrence.Status != OccurrenceStatus.Done)
         {
             return;
         }
@@ -154,57 +129,82 @@ public sealed class TaskNotificationService(
             return;
         }
 
-        var subscriptions = await dbContext.PushSubscriptions
-            .AsNoTracking()
-            .Where(subscription => subscription.IsActive && recipientIds.Contains(subscription.UserId))
-            .ToListAsync(cancellationToken);
-        var subscriptionsByUser = subscriptions
-            .GroupBy(subscription => subscription.UserId)
-            .ToDictionary(group => group.Key, group => group.ToList());
-        if (subscriptionsByUser.Count == 0)
-        {
-            return;
-        }
-
-        var preferencesByUser = await LoadPreferencesAsync(subscriptionsByUser.Keys, cancellationToken);
-        var existingKeys = await LoadExistingTaskDeliveryKeysAsync(
-            subscriptions.Select(subscription => subscription.Id),
-            cancellationToken);
+        var preferencesByUser = await LoadPreferencesAsync(recipientIds, cancellationToken);
         var dueAtUtc = DateTime.SpecifyKind(completion.CreatedAt, DateTimeKind.Utc);
-        var now = DateTime.SpecifyKind(_timeProvider.GetUtcNow().UtcDateTime, DateTimeKind.Utc);
-        var newDeliveries = new List<NotificationDelivery>();
 
         foreach (var recipientId in recipientIds)
         {
-            if (!subscriptionsByUser.TryGetValue(recipientId, out var recipientSubscriptions)
-                || !IsEnabled(task.NotificationOverride?.TaskCompletedEnabled, preferencesByUser[recipientId].TaskCompletedEnabled))
+            if (!IsEnabled(task.NotificationOverride?.TaskCompletedEnabled, preferencesByUser[recipientId].TaskCompletedEnabled))
             {
                 continue;
             }
 
-            foreach (var subscription in recipientSubscriptions)
-            {
-                var deduplicationKey = BuildDeduplicationKey(
-                    CompletedSourceType,
-                    occurrence.Id,
-                    completion.Id,
-                    recipientId,
-                    subscription.Id,
-                    dueAtUtc);
-                AddDeliveryIfMissing(
-                    newDeliveries,
-                    existingKeys,
-                    subscription,
-                    recipientId,
-                    CompletedSourceType,
-                    completion.Id,
-                    deduplicationKey,
-                    dueAtUtc,
-                    now);
-            }
+            await inboxService.CreateAsync(
+                recipientId,
+                CompletedSourceType,
+                completion.Id,
+                $"task-completed:{occurrence.Id:N}:{completion.Id:N}:{recipientId:N}",
+                $"Tarea completada: {task.Title}",
+                "La tarea se ha completado.",
+                "/now",
+                new { sourceType = CompletedSourceType, sourceId = completion.Id, taskId = task.Id, occurrenceId = occurrence.Id, occurrenceDate = occurrence.Date, dueAtUtc },
+                dueAtUtc,
+                CanQueueNotifications(),
+                cancellationToken);
+        }
+    }
+
+    private async Task QueueScheduledInboxItemsAsync(
+        DoItTask task,
+        TaskOccurrence occurrence,
+        Guid recipientId,
+        UserNotificationPreference preference,
+        DateTime fromUtc,
+        DateTime nowUtc,
+        CancellationToken cancellationToken)
+    {
+        var endOffset = task.NotificationOverride?.BeforeAvailableUntilMinutes ?? preference.BeforeAvailableUntilMinutes;
+        var recommendedDue = IsEnabled(task.NotificationOverride?.RecommendedEnabled, preference.RecommendedEnabled) ? occurrence.RecommendedAt : null;
+        await QueueInboxEventAsync(task.NotificationOverride?.RecommendedEnabled, preference.RecommendedEnabled, occurrence.RecommendedAt, RecommendedSourceType, "Hora recomendada", "Es un buen momento para hacer esta tarea.", null, task, occurrence, recipientId, fromUtc, nowUtc, cancellationToken);
+        await QueueInboxEventAsync(task.NotificationOverride?.AvailableFromEnabled, preference.AvailableFromEnabled, occurrence.AvailableFromAt, AvailableFromSourceType, "Ya disponible", "La tarea ha entrado en su horario disponible.", recommendedDue, task, occurrence, recipientId, fromUtc, nowUtc, cancellationToken);
+        var endDue = IsValidEndOffset(endOffset) ? occurrence.AvailableUntilAt?.AddMinutes(-endOffset) : null;
+        await QueueInboxEventAsync(task.NotificationOverride?.BeforeAvailableUntilEnabled, preference.BeforeAvailableUntilEnabled, endDue, BeforeAvailableUntilSourceType, "Próximo fin", $"La disponibilidad termina en {endOffset} minutos.", recommendedDue, task, occurrence, recipientId, fromUtc, nowUtc, cancellationToken);
+        await QueueInboxEventAsync(task.NotificationOverride?.TaskExpiredEnabled, preference.TaskExpiredEnabled, occurrence.AvailableUntilAt, ExpiredSourceType, "Tarea vencida", "La ventana de disponibilidad ha terminado.", recommendedDue, task, occurrence, recipientId, fromUtc, nowUtc, cancellationToken);
+    }
+
+    private async Task QueueInboxEventAsync(
+        bool? overrideEnabled,
+        bool preferenceEnabled,
+        DateTime? dueAtUtc,
+        string sourceType,
+        string titlePrefix,
+        string body,
+        DateTime? skipIfDueAtUtc,
+        DoItTask task,
+        TaskOccurrence occurrence,
+        Guid recipientId,
+        DateTime fromUtc,
+        DateTime nowUtc,
+        CancellationToken cancellationToken)
+    {
+        if (!IsEnabled(overrideEnabled, preferenceEnabled) || dueAtUtc is null || dueAtUtc == skipIfDueAtUtc || !IsValidDueAt(dueAtUtc.Value, fromUtc, nowUtc))
+        {
+            return;
         }
 
-        await SaveNewDeliveriesAsync(newDeliveries, cancellationToken);
+        var due = DateTime.SpecifyKind(dueAtUtc.Value, DateTimeKind.Utc);
+        await inboxService.CreateAsync(
+            recipientId,
+            sourceType,
+            occurrence.Id,
+            $"task:{sourceType}:{occurrence.Id:N}:{recipientId:N}:{due.Ticks}",
+            $"{titlePrefix}: {task.Title}",
+            body,
+            "/now",
+            new { sourceType, sourceId = occurrence.Id, taskId = task.Id, occurrenceId = occurrence.Id, occurrenceDate = occurrence.Date, dueAtUtc = due },
+            due,
+            CanQueueNotifications(),
+            cancellationToken);
     }
 
     public async Task<string?> BuildPayloadIfEligibleAsync(

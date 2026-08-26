@@ -22,6 +22,8 @@ public sealed class DoItDbContext(DbContextOptions<DoItDbContext> options) : DbC
     public DbSet<CalendarEventReminder> CalendarEventReminders => Set<CalendarEventReminder>();
     public DbSet<PushSubscription> PushSubscriptions => Set<PushSubscription>();
     public DbSet<NotificationDelivery> NotificationDeliveries => Set<NotificationDelivery>();
+    public DbSet<NotificationInboxItem> NotificationInboxItems => Set<NotificationInboxItem>();
+    public DbSet<TaskProposal> TaskProposals => Set<TaskProposal>();
     public DbSet<UserNotificationPreference> UserNotificationPreferences => Set<UserNotificationPreference>();
     public DbSet<TaskNotificationOverride> TaskNotificationOverrides => Set<TaskNotificationOverride>();
     public DbSet<HouseholdConnection> HouseholdConnections => Set<HouseholdConnection>();

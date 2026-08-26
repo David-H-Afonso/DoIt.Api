@@ -3,6 +3,7 @@ using System;
 using DoIt.Api.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -10,9 +11,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace DoIt.Api.Infrastructure.Persistence.Migrations
 {
     [DbContext(typeof(DoItDbContext))]
-    partial class DoItDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260826132441_AddNotificationInboxAndTaskProposals")]
+    partial class AddNotificationInboxAndTaskProposals
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "9.0.7");
@@ -463,10 +466,6 @@ namespace DoIt.Api.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("PushSubscriptionId", "DeduplicationKey")
                         .IsUnique();
-
-                    b.HasIndex("PushSubscriptionId", "PushGroupKey")
-                        .IsUnique()
-                        .HasFilter("PushGroupKey IS NOT NULL");
 
                     b.HasIndex("SourceType", "SourceId");
 

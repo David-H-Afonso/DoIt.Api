@@ -18,6 +18,16 @@ public sealed class UserService(DoItDbContext dbContext, IPasswordHasher passwor
         return users.Select(user => user.ToResponse()).ToList();
     }
 
+    public async Task<IReadOnlyList<UserResponse>> ListActiveAsync(CancellationToken cancellationToken)
+    {
+        var users = await dbContext.Users
+            .AsNoTracking()
+            .Where(user => user.IsActive)
+            .OrderBy(user => user.Username)
+            .ToListAsync(cancellationToken);
+        return users.Select(user => user.ToResponse()).ToList();
+    }
+
     public async Task<UserResponse> CreateAsync(CreateUserRequest request, CancellationToken cancellationToken)
     {
         var username = NormalizeUsername(request.Username);

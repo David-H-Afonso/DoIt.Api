@@ -104,6 +104,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IZoneService, ZoneService>();
         services.AddScoped<IUserService, UserService>();
         services.AddScoped<ITaskService, TaskService>();
+        services.AddScoped<ITaskProposalService, TaskProposalService>();
         services.AddScoped<IBackupService, BackupService>();
         services.AddScoped<ICalendarEventService, CalendarEventService>();
         services.AddScoped<IHouseholdIntegrationService, HouseholdIntegrationService>();
@@ -134,6 +135,7 @@ public static class ServiceCollectionExtensions
     {
         services.AddScoped<IPushSubscriptionService, PushSubscriptionService>();
         services.AddScoped<INotificationPreferenceService, NotificationPreferenceService>();
+        services.AddScoped<INotificationInboxService, NotificationInboxService>();
         services.AddScoped<ITaskNotificationService, TaskNotificationService>();
         services.AddScoped<INotificationDispatcher, NotificationDispatcher>();
         services.AddSingleton<IWebPushSender, WebPushSender>();
