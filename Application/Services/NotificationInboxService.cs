@@ -108,6 +108,13 @@ public sealed class NotificationInboxService(
         await dbContext.SaveChangesAsync(cancellationToken);
     }
 
+    public async Task MarkAllReadAsync(Guid userId, CancellationToken cancellationToken)
+    {
+        await dbContext.NotificationInboxItems
+            .Where(item => item.UserId == userId && item.ReadAtUtc == null)
+            .ExecuteUpdateAsync(setters => setters.SetProperty(item => item.ReadAtUtc, timeProvider.GetUtcNow().UtcDateTime), cancellationToken);
+    }
+
     public async Task<IReadOnlyList<NotificationInboxItemResponse>> ListForPushGroupAsync(Guid userId, string groupKey, CancellationToken cancellationToken)
     {
         var parts = groupKey.Split(':');

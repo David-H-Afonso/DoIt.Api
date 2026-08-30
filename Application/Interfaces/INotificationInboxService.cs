@@ -19,6 +19,7 @@ public interface INotificationInboxService
         bool queuePush,
         CancellationToken cancellationToken);
     Task MarkReadAsync(Guid userId, Guid itemId, CancellationToken cancellationToken);
+    Task MarkAllReadAsync(Guid userId, CancellationToken cancellationToken);
     Task<IReadOnlyList<NotificationInboxItemResponse>> ListForPushGroupAsync(Guid userId, string groupKey, CancellationToken cancellationToken);
     Task PruneExpiredAsync(DateTime nowUtc, CancellationToken cancellationToken);
 }

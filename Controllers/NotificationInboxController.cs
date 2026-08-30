@@ -29,6 +29,14 @@ public sealed class NotificationInboxController(INotificationInboxService inboxS
         return NoContent();
     }
 
+    [HttpPost("read-all")]
+    [HttpPatch("read-all")]
+    public async Task<IActionResult> MarkAllRead(CancellationToken cancellationToken)
+    {
+        await inboxService.MarkAllReadAsync(GetUserId(), cancellationToken);
+        return NoContent();
+    }
+
     private Guid GetUserId() => Guid.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier), out var userId)
         ? userId
         : throw new UnauthorizedAccessException();
