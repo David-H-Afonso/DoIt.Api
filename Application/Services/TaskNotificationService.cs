@@ -134,10 +134,7 @@ public sealed class TaskNotificationService(
 
         foreach (var recipientId in recipientIds)
         {
-            if (!IsEnabled(task.NotificationOverride?.TaskCompletedEnabled, preferencesByUser[recipientId].TaskCompletedEnabled))
-            {
-                continue;
-            }
+            var pushEnabled = IsEnabled(task.NotificationOverride?.TaskCompletedEnabled, preferencesByUser[recipientId].TaskCompletedEnabled);
 
             await inboxService.CreateAsync(
                 recipientId,
@@ -149,7 +146,7 @@ public sealed class TaskNotificationService(
                 "/now",
                 new { sourceType = CompletedSourceType, sourceId = completion.Id, taskId = task.Id, occurrenceId = occurrence.Id, occurrenceDate = occurrence.Date, dueAtUtc },
                 dueAtUtc,
-                CanQueueNotifications(),
+                CanQueueNotifications() && pushEnabled,
                 cancellationToken);
         }
     }
@@ -187,12 +184,13 @@ public sealed class TaskNotificationService(
         DateTime nowUtc,
         CancellationToken cancellationToken)
     {
-        if (!IsEnabled(overrideEnabled, preferenceEnabled) || dueAtUtc is null || dueAtUtc == skipIfDueAtUtc || !IsValidDueAt(dueAtUtc.Value, fromUtc, nowUtc))
+        if (dueAtUtc is null || dueAtUtc == skipIfDueAtUtc || !IsValidDueAt(dueAtUtc.Value, fromUtc, nowUtc))
         {
             return;
         }
 
         var due = DateTime.SpecifyKind(dueAtUtc.Value, DateTimeKind.Utc);
+        var pushEnabled = IsEnabled(overrideEnabled, preferenceEnabled);
         await inboxService.CreateAsync(
             recipientId,
             sourceType,
@@ -203,7 +201,7 @@ public sealed class TaskNotificationService(
             "/now",
             new { sourceType, sourceId = occurrence.Id, taskId = task.Id, occurrenceId = occurrence.Id, occurrenceDate = occurrence.Date, dueAtUtc = due },
             due,
-            CanQueueNotifications(),
+            CanQueueNotifications() && pushEnabled,
             cancellationToken);
     }
 
