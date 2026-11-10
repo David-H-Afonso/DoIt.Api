@@ -16,3 +16,7 @@ public sealed record TaskNotificationOverrideResponse(
     bool? TaskExpiredEnabled,
     bool? TaskCompletedEnabled,
     int? BeforeAvailableUntilMinutes);
+
+public sealed record TaskNotificationSettingsResponse(
+    NotificationPreferenceResponse Preferences,
+    IReadOnlyList<TaskNotificationOverrideResponse> Tasks);

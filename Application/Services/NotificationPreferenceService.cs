@@ -36,6 +36,89 @@ public sealed class NotificationPreferenceService(DoItDbContext dbContext) : INo
         return ToResponse(preference);
     }
 
+    public async Task<TaskNotificationSettingsResponse> ListTaskSettingsAsync(Guid userId, CancellationToken cancellationToken)
+    {
+        var userExists = await dbContext.Users.AnyAsync(user => user.Id == userId && user.IsActive, cancellationToken);
+        if (!userExists)
+        {
+            throw new ApiException(StatusCodes.Status404NotFound, "user_not_found", "User not found.");
+        }
+
+        // Listing must not create preferences or make a request per task. Keep the
+        // same visibility rules as the existing individual notification endpoint.
+        var preference = await dbContext.UserNotificationPreferences
+            .AsNoTracking()
+            .FirstOrDefaultAsync(candidate => candidate.UserId == userId, cancellationToken)
+            ?? new UserNotificationPreference { UserId = userId };
+        var tasks = await dbContext.Tasks
+            .AsNoTracking()
+            .Include(task => task.NotificationOverride)
+            .Where(task => task.CreatedByUserId == userId
+                || task.Scope == TaskScope.House && (task.AssignmentMode == AssignmentMode.Anyone
+                    || task.Assignments.Any(assignment => assignment.UserId == userId)))
+            .OrderBy(task => task.Id)
+            .ToListAsync(cancellationToken);
+
+        return new TaskNotificationSettingsResponse(
+            ToResponse(preference),
+            tasks.Select(task => ToResponse(task.Id, task.NotificationOverride)).ToList());
+    }
+
+    public async Task<IReadOnlyList<TaskNotificationOverrideResponse>> UpdateTaskOverridesAsync(
+        Guid userId,
+        UpdateTaskNotificationsRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (request.Tasks is null || request.Tasks.Count is < 1 or > 500
+            || request.Tasks.Any(update => update is null || update.TaskId == Guid.Empty || update.Settings is null))
+        {
+            throw new ApiException(StatusCodes.Status400BadRequest, "invalid_notification_batch", "Choose between one and 500 tasks.");
+        }
+
+        var taskIds = request.Tasks.Select(update => update.TaskId).Distinct().ToList();
+        if (taskIds.Count != request.Tasks.Count)
+        {
+            throw new ApiException(StatusCodes.Status400BadRequest, "invalid_notification_batch", "Each task may appear only once.");
+        }
+
+        var ownedTaskCount = await dbContext.Tasks
+            .CountAsync(task => taskIds.Contains(task.Id) && task.CreatedByUserId == userId, cancellationToken);
+        if (ownedTaskCount != taskIds.Count)
+        {
+            throw new ApiException(StatusCodes.Status404NotFound, "task_not_found", "Task not found.");
+        }
+
+        // Validate the entire batch before tracking changes: either every task is
+        // updated in one SaveChanges transaction, or none is changed.
+        foreach (var update in request.Tasks)
+        {
+            if (update.Settings.BeforeAvailableUntilMinutes is { } minutes)
+            {
+                NormalizeOffset(minutes);
+            }
+        }
+
+        var stored = await dbContext.TaskNotificationOverrides
+            .Where(candidate => taskIds.Contains(candidate.TaskId))
+            .ToDictionaryAsync(candidate => candidate.TaskId, cancellationToken);
+        var now = DateTime.UtcNow;
+        var result = new List<TaskNotificationOverrideResponse>(request.Tasks.Count);
+        foreach (var update in request.Tasks)
+        {
+            if (!stored.TryGetValue(update.TaskId, out var notificationOverride))
+            {
+                notificationOverride = new TaskNotificationOverride { TaskId = update.TaskId, CreatedAt = now };
+                dbContext.TaskNotificationOverrides.Add(notificationOverride);
+            }
+
+            ApplyOverride(notificationOverride, update.Settings, now);
+            result.Add(ToResponse(update.TaskId, notificationOverride));
+        }
+
+        await dbContext.SaveChangesAsync(cancellationToken);
+        return result;
+    }
+
     public async Task<TaskNotificationOverrideResponse> GetTaskOverrideAsync(
         Guid userId,
         Guid taskId,
@@ -71,15 +154,7 @@ public sealed class NotificationPreferenceService(DoItDbContext dbContext) : INo
             dbContext.TaskNotificationOverrides.Add(notificationOverride);
         }
 
-        notificationOverride.AvailableFromEnabled = request.AvailableFromEnabled;
-        notificationOverride.RecommendedEnabled = request.RecommendedEnabled;
-        notificationOverride.BeforeAvailableUntilEnabled = request.BeforeAvailableUntilEnabled;
-        notificationOverride.TaskExpiredEnabled = request.TaskExpiredEnabled;
-        notificationOverride.TaskCompletedEnabled = request.TaskCompletedEnabled;
-        notificationOverride.BeforeAvailableUntilMinutes = request.BeforeAvailableUntilMinutes is null
-            ? null
-            : NormalizeOffset(request.BeforeAvailableUntilMinutes.Value);
-        notificationOverride.UpdatedAt = now;
+        ApplyOverride(notificationOverride, request, now);
 
         await dbContext.SaveChangesAsync(cancellationToken);
         return ToResponse(taskId, notificationOverride);
@@ -158,6 +233,19 @@ public sealed class NotificationPreferenceService(DoItDbContext dbContext) : INo
 
         return task.AssignmentMode == AssignmentMode.Anyone
             || task.Assignments.Any(assignment => assignment.UserId == userId);
+    }
+
+    private static void ApplyOverride(TaskNotificationOverride notificationOverride, UpdateTaskNotificationOverrideRequest request, DateTime now)
+    {
+        notificationOverride.AvailableFromEnabled = request.AvailableFromEnabled;
+        notificationOverride.RecommendedEnabled = request.RecommendedEnabled;
+        notificationOverride.BeforeAvailableUntilEnabled = request.BeforeAvailableUntilEnabled;
+        notificationOverride.TaskExpiredEnabled = request.TaskExpiredEnabled;
+        notificationOverride.TaskCompletedEnabled = request.TaskCompletedEnabled;
+        notificationOverride.BeforeAvailableUntilMinutes = request.BeforeAvailableUntilMinutes is null
+            ? null
+            : NormalizeOffset(request.BeforeAvailableUntilMinutes.Value);
+        notificationOverride.UpdatedAt = now;
     }
 
     private static int NormalizeOffset(int minutes)

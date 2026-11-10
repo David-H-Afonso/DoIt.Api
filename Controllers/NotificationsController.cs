@@ -63,6 +63,22 @@ public sealed class NotificationsController(
         return Ok(await notificationPreferenceService.UpdateAsync(GetUserId(), request, cancellationToken));
     }
 
+    [HttpGet("tasks")]
+    [ProducesResponseType<TaskNotificationSettingsResponse>(StatusCodes.Status200OK)]
+    public async Task<ActionResult<TaskNotificationSettingsResponse>> ListTaskSettings(CancellationToken cancellationToken)
+    {
+        return Ok(await notificationPreferenceService.ListTaskSettingsAsync(GetUserId(), cancellationToken));
+    }
+
+    [HttpPut("tasks")]
+    [ProducesResponseType<IReadOnlyList<TaskNotificationOverrideResponse>>(StatusCodes.Status200OK)]
+    public async Task<ActionResult<IReadOnlyList<TaskNotificationOverrideResponse>>> UpdateTaskOverrides(
+        UpdateTaskNotificationsRequest request,
+        CancellationToken cancellationToken)
+    {
+        return Ok(await notificationPreferenceService.UpdateTaskOverridesAsync(GetUserId(), request, cancellationToken));
+    }
+
     [HttpGet("tasks/{taskId:guid}")]
     [ProducesResponseType<TaskNotificationOverrideResponse>(StatusCodes.Status200OK)]
     public async Task<ActionResult<TaskNotificationOverrideResponse>> GetTaskOverride(
